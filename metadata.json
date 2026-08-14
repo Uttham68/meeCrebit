@@ -1,0 +1,7 @@
+{
+  "name": "meeCrebit",
+  "description": "Automated Privacy-First Financial Tracker with local SMS interception, budget planning, monthly statements, and offline analytics.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
+

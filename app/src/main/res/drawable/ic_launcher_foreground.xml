@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <group
+        android:pivotX="54"
+        android:pivotY="54"
+        android:scaleX="0.8"
+        android:scaleY="0.8">
+        <!-- Shield Background Frame -->
+        <path
+            android:fillColor="#10B981"
+            android:pathData="M54,22 L78,32 C78,54 67,69 54,78 C41,69 30,54 30,32 Z" />
+        <!-- Inner Dark Shield -->
+        <path
+            android:fillColor="#04201A"
+            android:pathData="M54,26 L74,34 C74,52 64,65 54,73 C44,65 34,52 34,34 Z" />
+        <!-- Stylized Credit Card / Currency Sync Glyph -->
+        <!-- Card body -->
+        <path
+            android:fillColor="#34D399"
+            android:pathData="M40,39 C40,37.3 41.3,36 43,36 L65,36 C66.7,36 68,37.3 68,39 L68,55 C68,56.7 66.7,58 65,58 L43,58 C41.3,58 40,56.7 40,55 Z" />
+        <!-- Card strip -->
+        <path
+            android:fillColor="#064E3B"
+            android:pathData="M40,41 L68,41 L68,45 L40,45 Z" />
+        <!-- Smart chip / Lock accent -->
+        <path
+            android:fillColor="#FBBF24"
+            android:pathData="M44,48 L49,48 L49,53 L44,53 Z" />
+        <path
+            android:fillColor="#FFFFFF"
+            android:pathData="M53,49 L64,49 L64,51 L53,51 Z" />
+        <path
+            android:fillColor="#FFFFFF"
+            android:pathData="M53,53 L60,53 L60,55 L53,55 Z" />
+        <!-- Offline Privacy Check / Lock Badge at bottom -->
+        <path
+            android:fillColor="#10B981"
+            android:pathData="M54,61 C57.3,61 60,63.7 60,67 C60,70.3 57.3,73 54,73 C50.7,73 48,70.3 48,67 C48,63.7 50.7,61 54,61 Z" />
+        <path
+            android:fillColor="#04201A"
+            android:pathData="M52.5,67 L51,65.5 L49.5,67 L52.5,70 L58.5,64 L57,62.5 Z" />
+    </group>
+</vector>
+

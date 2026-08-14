@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">meeCrebit</string>
+    <string name="widget_description">Glance at current month total spending vs. budget</string>
+</resources>
