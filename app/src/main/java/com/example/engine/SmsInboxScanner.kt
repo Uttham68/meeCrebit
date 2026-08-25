@@ -4,13 +4,14 @@ import android.content.Context
 import android.net.Uri
 import android.provider.Telephony
 import android.util.Log
+import com.example.data.db.MeeCrebitDatabase
 import com.example.data.model.TransactionEntity
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 object SmsInboxScanner {
 
-    suspend fun scanInbox(context: Context, limit: Int = 100): List<TransactionEntity> = withContext(Dispatchers.IO) {
+    suspend fun scanInbox(context: Context, limit: Int = 150): List<TransactionEntity> = withContext(Dispatchers.IO) {
         val transactions = mutableListOf<TransactionEntity>()
         val uri: Uri = Telephony.Sms.Inbox.CONTENT_URI
 
@@ -22,6 +23,9 @@ object SmsInboxScanner {
         )
 
         try {
+            val db = MeeCrebitDatabase.getInstance(context)
+            val rules = db.merchantRuleDao().getActiveRulesSync()
+
             val cursor = context.contentResolver.query(
                 uri,
                 projection,
@@ -40,9 +44,12 @@ object SmsInboxScanner {
                     val body = it.getString(bodyIdx) ?: ""
                     val date = it.getLong(dateIdx)
 
-                    val parsed = SmsParserEngine.parse(body, address)
+                    if (body.isBlank()) continue
+
+                    val parsed = SmsParserEngine.parse(body, address, rules)
                     if (parsed.isValidTransaction) {
-                        val entity = SmsParserEngine.toEntity(parsed, customTimestamp = date)
+                        val txnDate = SmsParserEngine.extractTransactionDate(body, date)
+                        val entity = SmsParserEngine.toEntity(parsed, customTimestamp = txnDate)
                         transactions.add(entity)
                     }
                 }

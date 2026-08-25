@@ -108,11 +108,17 @@ import com.example.ui.theme.EmeraldLight
 import com.example.ui.theme.EmeraldPrimary
 import com.example.ui.theme.ExpenseRed
 import com.example.ui.theme.IncomeGreen
+import com.example.ui.theme.Slate400
 import com.example.ui.theme.TrueBlackBackground
 import com.example.viewmodel.FinanceViewModel
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+
+enum class ReportsViewMode(val title: String, val icon: androidx.compose.ui.graphics.vector.ImageVector) {
+    ADVANCED_ANALYTICS("Smart Analytics", Icons.Default.TrendingUp),
+    CUSTOM_REPORTS("Ledger Reports & Export", Icons.Default.Assessment)
+}
 
 enum class ReportSortOption(val displayName: String) {
     DATE_DESC("Newest First"),
@@ -128,6 +134,7 @@ fun CustomReportsScreen(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    var activeViewMode by remember { mutableStateOf(ReportsViewMode.ADVANCED_ANALYTICS) }
     val insights by viewModel.reportInsights.collectAsStateWithLifecycle()
     val filter by viewModel.reportFilter.collectAsStateWithLifecycle()
     val savedPresets by viewModel.savedPresets.collectAsStateWithLifecycle()
@@ -158,14 +165,73 @@ fun CustomReportsScreen(
         }
     }
 
-    LazyColumn(
+    Column(
         modifier = modifier
             .fillMaxSize()
             .background(TrueBlackBackground)
-            .padding(horizontal = 16.dp),
-        contentPadding = PaddingValues(top = 16.dp, bottom = 90.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
+        // Top Master Mode Switcher Bar
+        Surface(
+            color = DarkSurfaceContainerLow,
+            border = BorderStroke(1.dp, DarkOutlineVariant),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 10.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                ReportsViewMode.values().forEach { mode ->
+                    val isSelected = activeViewMode == mode
+                    Surface(
+                        onClick = { activeViewMode = mode },
+                        shape = RoundedCornerShape(10.dp),
+                        color = if (isSelected) EmeraldPrimary else DarkSurfaceContainer,
+                        border = BorderStroke(1.dp, if (isSelected) EmeraldLight else DarkOutlineVariant),
+                        modifier = Modifier
+                            .weight(1f)
+                            .testTag("report_mode_${mode.name.lowercase()}")
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(vertical = 8.dp, horizontal = 8.dp),
+                            horizontalArrangement = Arrangement.Center,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = mode.icon,
+                                contentDescription = null,
+                                tint = if (isSelected) Color(0xFF04201A) else Slate400,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = mode.title,
+                                color = if (isSelected) Color(0xFF04201A) else Slate400,
+                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                fontSize = 12.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        if (activeViewMode == ReportsViewMode.ADVANCED_ANALYTICS) {
+            AdvancedAnalyticsScreen(
+                viewModel = viewModel,
+                modifier = Modifier.fillMaxSize()
+            )
+        } else {
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = 16.dp),
+                contentPadding = PaddingValues(top = 12.dp, bottom = 90.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
         // Top Header
         item {
             Column(
@@ -1250,6 +1316,8 @@ fun CustomReportsScreen(
             }
         }
     }
+}
+}
 
     // Save Preset Dialog
     if (showSavePresetDialog) {

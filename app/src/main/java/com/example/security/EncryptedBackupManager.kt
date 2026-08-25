@@ -111,7 +111,9 @@ object EncryptedBackupManager {
             if (zenProfile != null) {
                 put("zenProfile", JSONObject().apply {
                     put("totalPoints", zenProfile.totalPoints)
-                    put("privacyScore", zenProfile.privacyScore)
+                    put("streakDays", zenProfile.streakDays)
+                    put("lastActiveDate", zenProfile.lastActiveDate)
+                    put("monthlySavingsGoal", zenProfile.monthlySavingsGoal)
                 })
             }
         }
@@ -202,7 +204,9 @@ object EncryptedBackupManager {
             zenProfile = ZenProfileEntity(
                 id = 1,
                 totalPoints = pObj.optInt("totalPoints", 120),
-                privacyScore = pObj.optInt("privacyScore", 100)
+                streakDays = pObj.optInt("streakDays", 1),
+                lastActiveDate = pObj.optString("lastActiveDate", ""),
+                monthlySavingsGoal = pObj.optDouble("monthlySavingsGoal", 5000.0)
             )
         }
 

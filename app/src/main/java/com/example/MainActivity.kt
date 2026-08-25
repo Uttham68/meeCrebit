@@ -90,9 +90,18 @@ enum class MeeCrebitNavTab(
 }
 
 class MainActivity : FragmentActivity() {
+    private var dynamicSmsReceiver: com.example.receiver.SmsBroadcastReceiver? = null
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+
+        // Register dynamic SMS receiver and ContentObserver for real-time automatic detection
+        registerDynamicSmsReceiver()
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_SMS) == PackageManager.PERMISSION_GRANTED) {
+            com.example.engine.SmsInboxObserver.startObserving(this)
+        }
+
         setContent {
             MeeCrebitTheme {
                 val viewModel: FinanceViewModel = viewModel()
@@ -117,6 +126,34 @@ class MainActivity : FragmentActivity() {
                 )
             }
         }
+    }
+
+    private fun registerDynamicSmsReceiver() {
+        try {
+            if (dynamicSmsReceiver == null) {
+                dynamicSmsReceiver = com.example.receiver.SmsBroadcastReceiver()
+                val filter = android.content.IntentFilter(android.provider.Telephony.Sms.Intents.SMS_RECEIVED_ACTION).apply {
+                    priority = 999
+                }
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    registerReceiver(dynamicSmsReceiver, filter, ContextCompat.RECEIVER_EXPORTED)
+                } else {
+                    registerReceiver(dynamicSmsReceiver, filter)
+                }
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("MainActivity", "Failed to register dynamic SMS receiver: ${e.message}")
+        }
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        try {
+            dynamicSmsReceiver?.let {
+                unregisterReceiver(it)
+                dynamicSmsReceiver = null
+            }
+        } catch (_: Exception) {}
     }
 }
 

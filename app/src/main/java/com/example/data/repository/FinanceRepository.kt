@@ -60,6 +60,10 @@ class FinanceRepository(private val db: MeeCrebitDatabase) {
         db.budgetDao().insertOrUpdateBudget(budget)
     }
 
+    suspend fun insertOrUpdateBudgets(budgets: List<BudgetEntity>) {
+        db.budgetDao().insertAll(budgets)
+    }
+
     suspend fun deleteBudget(id: Long) {
         db.budgetDao().deleteById(id)
     }
@@ -100,6 +104,117 @@ class FinanceRepository(private val db: MeeCrebitDatabase) {
         db.budgetDao().deleteAll()
         db.merchantRuleDao().deleteAll()
         db.zenProfileDao().insertOrUpdateProfile(ZenProfileEntity(totalPoints = 100))
+    }
+
+    fun getUserCustomMonthlyBudget(context: Context): Double? {
+        val prefs = context.getSharedPreferences("meecrebit_budget_prefs", Context.MODE_PRIVATE)
+        return if (prefs.contains("user_custom_monthly_budget")) {
+            val v = prefs.getFloat("user_custom_monthly_budget", -1f)
+            if (v > 0) v.toDouble() else null
+        } else {
+            null
+        }
+    }
+
+    fun setUserCustomMonthlyBudget(context: Context, limit: Double?) {
+        val prefs = context.getSharedPreferences("meecrebit_budget_prefs", Context.MODE_PRIVATE)
+        if (limit != null && limit > 0) {
+            prefs.edit().putFloat("user_custom_monthly_budget", limit.toFloat()).apply()
+        } else {
+            prefs.edit().remove("user_custom_monthly_budget").apply()
+        }
+    }
+
+    suspend fun repairExistingTransactionDates(context: Context? = null): Int {
+        val allTxns = db.transactionDao().getAllTransactionsSync()
+        if (allTxns.isEmpty()) return 0
+
+        val rules = db.merchantRuleDao().getActiveRulesSync()
+
+        // Query device SMS inbox if permission is granted to get true message timestamps
+        val smsDateMap = mutableMapOf<String, Long>()
+        if (context != null && androidx.core.content.ContextCompat.checkSelfPermission(
+                context,
+                android.Manifest.permission.READ_SMS
+            ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        ) {
+            try {
+                val uri = android.provider.Telephony.Sms.CONTENT_URI
+                val projection = arrayOf(android.provider.Telephony.Sms.BODY, android.provider.Telephony.Sms.DATE)
+                val cursor = context.contentResolver.query(
+                    uri,
+                    projection,
+                    null,
+                    null,
+                    "${android.provider.Telephony.Sms.DATE} DESC LIMIT 500"
+                )
+                cursor?.use { c ->
+                    val bodyIdx = c.getColumnIndex(android.provider.Telephony.Sms.BODY)
+                    val dateIdx = c.getColumnIndex(android.provider.Telephony.Sms.DATE)
+                    while (c.moveToNext()) {
+                        val body = if (bodyIdx >= 0) c.getString(bodyIdx) else null
+                        val date = if (dateIdx >= 0) c.getLong(dateIdx) else 0L
+                        if (!body.isNullOrBlank() && date > 0) {
+                            val cleanKey = body.trim().replace("\\s+".toRegex(), " ")
+                            if (!smsDateMap.containsKey(cleanKey)) {
+                                smsDateMap[cleanKey] = date
+                            }
+                        }
+                    }
+                }
+            } catch (_: Exception) {
+            }
+        }
+
+        val currentYear = java.util.Calendar.getInstance().get(java.util.Calendar.YEAR)
+        var repairedCount = 0
+        for (tx in allTxns) {
+            val raw = tx.rawSmsBody
+            if (!raw.isNullOrBlank()) {
+                val cleanKey = raw.trim().replace("\\s+".toRegex(), " ")
+                val inboxSmsDate = smsDateMap[cleanKey] ?: tx.timestamp
+                val parsed = com.example.engine.SmsParserEngine.parse(raw, tx.sender ?: "", rules)
+
+                if (!parsed.isValidTransaction) {
+                    // Remove non-transactional artifacts (OTPs, balance inquiries, promotional limit SMS)
+                    db.transactionDao().deleteById(tx.id)
+                    repairedCount++
+                    continue
+                }
+
+                var targetDate = com.example.engine.SmsParserEngine.extractTransactionDate(raw, inboxSmsDate)
+                val cal = java.util.Calendar.getInstance().apply { timeInMillis = targetDate }
+                if (cal.get(java.util.Calendar.YEAR) in 2000..(currentYear - 1)) {
+                    cal.set(java.util.Calendar.YEAR, currentYear)
+                    targetDate = cal.timeInMillis
+                }
+
+                val updatedTx = tx.copy(
+                    amount = parsed.amount,
+                    type = parsed.type,
+                    merchant = parsed.merchant,
+                    category = if (tx.category != ExpenseCategory.OTHERS && tx.category != parsed.category) tx.category else parsed.category,
+                    accountNumber = parsed.accountNumber,
+                    bankName = parsed.bankName,
+                    balanceAfter = parsed.balanceAfter,
+                    timestamp = targetDate
+                )
+
+                if (updatedTx != tx) {
+                    db.transactionDao().updateTransaction(updatedTx)
+                    repairedCount++
+                }
+            } else {
+                // Manual transaction - ensure timestamp year is plausible
+                val cal = java.util.Calendar.getInstance().apply { timeInMillis = tx.timestamp }
+                if (cal.get(java.util.Calendar.YEAR) in 2000..(currentYear - 1)) {
+                    cal.set(java.util.Calendar.YEAR, currentYear)
+                    db.transactionDao().updateTransaction(tx.copy(timestamp = cal.timeInMillis))
+                    repairedCount++
+                }
+            }
+        }
+        return repairedCount
     }
 
     suspend fun seedDefaultRulesIfEmpty() {

@@ -1,6 +1,8 @@
 package com.example.ui.screens
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -18,6 +20,8 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.WarningAmber
@@ -38,6 +42,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
@@ -56,8 +61,10 @@ import com.example.ui.theme.EmeraldPrimary
 import com.example.ui.theme.ExpenseRed
 import com.example.ui.theme.IncomeGreen
 import com.example.ui.theme.Slate400
+import com.example.ui.theme.Slate700
 import com.example.ui.theme.Slate800
 import com.example.ui.theme.Slate900
+import com.example.ui.theme.SlateSurfaceVariant
 import com.example.viewmodel.CategorySpendProgress
 import com.example.viewmodel.FinanceViewModel
 import java.util.Locale
@@ -72,10 +79,28 @@ fun BudgetScreen(
 
     var editingCategory by remember { mutableStateOf<ExpenseCategory?>(null) }
     var currentEditingLimit by remember { mutableStateOf<Double?>(null) }
+    var showCategoryBudgetPlannerDialog by remember { mutableStateOf(false) }
 
-    val totalBudget = categoryProgressList.mapNotNull { it.limit }.sum()
-    val totalSpentOnBudgeted = categoryProgressList.filter { it.limit != null }.sumOf { it.spent }
-    val overallProgress = if (totalBudget > 0) (totalSpentOnBudgeted / totalBudget).toFloat() else 0f
+    val sumCategoryLimits = categoryProgressList.mapNotNull { it.limit }.sum()
+    val effectiveBudgetCap = sumCategoryLimits
+    val totalSpentMonth = categoryProgressList.sumOf { it.spent }
+    val overallProgress = if (effectiveBudgetCap > 0) (totalSpentMonth / effectiveBudgetCap).toFloat() else 0f
+
+    if (showCategoryBudgetPlannerDialog) {
+        com.example.ui.components.CategoryMonthlyBudgetPlannerDialog(
+            initialCategoryLimits = categoryProgressList.filter { it.limit != null }.associate { it.category to it.limit!! },
+            categoryCurrentSpent = categoryProgressList.associate { it.category to it.spent },
+            selectedMonthYear = selectedMonth,
+            onDismiss = { showCategoryBudgetPlannerDialog = false },
+            onSaveCategoryBudgets = { newCategoryBudgets ->
+                viewModel.setBatchBudgetLimits(newCategoryBudgets, selectedMonth)
+                showCategoryBudgetPlannerDialog = false
+            },
+            onCopyFromPreviousMonth = {
+                viewModel.copyBudgetsFromPreviousMonth()
+            }
+        )
+    }
 
     LazyColumn(
         modifier = modifier
@@ -86,23 +111,126 @@ fun BudgetScreen(
     ) {
         // Screen Header
         item {
-            Column(
+            Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(vertical = 4.dp)
+                    .padding(vertical = 4.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(
-                    text = "Dynamic Budget Planner",
-                    style = MaterialTheme.typography.headlineMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onSurface
-                )
-                Spacer(modifier = Modifier.height(2.dp))
-                Text(
-                    text = "Set category limits & track sliding progress dynamically ($selectedMonth)",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = EmeraldLight
-                )
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Dynamic Budget Planner",
+                        style = MaterialTheme.typography.headlineMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        text = "Set category limits & track sliding progress ($selectedMonth)",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = EmeraldLight
+                    )
+                }
+
+                androidx.compose.material3.FilledTonalButton(
+                    onClick = { showCategoryBudgetPlannerDialog = true },
+                    shape = RoundedCornerShape(12.dp),
+                    colors = androidx.compose.material3.ButtonDefaults.filledTonalButtonColors(
+                        containerColor = SlateSurfaceVariant,
+                        contentColor = EmeraldLight
+                    ),
+                    modifier = Modifier.testTag("set_budget_header_btn")
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Edit,
+                        contentDescription = "Plan Monthly Budgets",
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("Plan Budgets", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                }
+            }
+        }
+
+        // Month Selector Bar
+        item {
+            val formattedMonth = remember(selectedMonth) {
+                try {
+                    val sdfInput = java.text.SimpleDateFormat("yyyy-MM", Locale.getDefault())
+                    val sdfOutput = java.text.SimpleDateFormat("MMMM yyyy", Locale.getDefault())
+                    val parsed = sdfInput.parse(selectedMonth)
+                    if (parsed != null) sdfOutput.format(parsed) else selectedMonth
+                } catch (_: Exception) {
+                    selectedMonth
+                }
+            }
+            Surface(
+                color = Slate900,
+                shape = RoundedCornerShape(16.dp),
+                border = BorderStroke(1.dp, Slate800),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "BUDGET PERIOD",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = Slate400,
+                        letterSpacing = 1.2.sp
+                    )
+
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(Color(0xFF131B26))
+                            .border(1.dp, Slate700, RoundedCornerShape(12.dp))
+                            .padding(horizontal = 4.dp, vertical = 2.dp)
+                    ) {
+                        IconButton(
+                            onClick = { viewModel.goToPreviousMonth() },
+                            modifier = Modifier
+                                .size(28.dp)
+                                .testTag("budget_prev_month_btn")
+                        ) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                                contentDescription = "Previous Month",
+                                tint = Slate400,
+                                modifier = Modifier.size(14.dp)
+                            )
+                        }
+
+                        Text(
+                            text = formattedMonth,
+                            color = EmeraldLight,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 13.sp,
+                            modifier = Modifier.padding(horizontal = 8.dp)
+                        )
+
+                        IconButton(
+                            onClick = { viewModel.goToNextMonth() },
+                            modifier = Modifier
+                                .size(28.dp)
+                                .testTag("budget_next_month_btn")
+                        ) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+                                contentDescription = "Next Month",
+                                tint = Slate400,
+                                modifier = Modifier.size(14.dp)
+                            )
+                        }
+                    }
+                }
             }
         }
 
@@ -114,16 +242,38 @@ fun BudgetScreen(
                 border = BorderStroke(1.dp, Slate800),
                 modifier = Modifier
                     .fillMaxWidth()
+                    .clickable { showCategoryBudgetPlannerDialog = true }
                     .testTag("overall_budget_card")
             ) {
                 Column(modifier = Modifier.padding(20.dp)) {
-                    Text(
-                        text = "TOTAL MONTHLY BUDGET HEALTH",
-                        style = MaterialTheme.typography.labelSmall,
-                        fontWeight = FontWeight.Bold,
-                        color = Slate400,
-                        letterSpacing = 1.5.sp
-                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "TOTAL MONTHLY BUDGET (CATEGORY SUM)",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = Slate400,
+                            letterSpacing = 1.5.sp
+                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = Icons.Default.Edit,
+                                contentDescription = "Edit Categories",
+                                tint = EmeraldLight,
+                                modifier = Modifier.size(14.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = "Plan All",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = EmeraldLight,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
                     Spacer(modifier = Modifier.height(10.dp))
 
                     Row(
@@ -132,18 +282,18 @@ fun BudgetScreen(
                         verticalAlignment = Alignment.Bottom
                     ) {
                         Column {
-                            Text("Total Spent", style = MaterialTheme.typography.labelSmall, color = Slate400)
+                            Text("Total Spent ($selectedMonth)", style = MaterialTheme.typography.labelSmall, color = Slate400)
                             Text(
-                                text = formatCurrency(totalSpentOnBudgeted),
+                                text = formatCurrency(totalSpentMonth),
                                 style = MaterialTheme.typography.headlineSmall,
                                 fontWeight = FontWeight.Bold,
-                                color = if (totalSpentOnBudgeted > totalBudget && totalBudget > 0) ExpenseRed else Color.White
+                                color = if (totalSpentMonth > effectiveBudgetCap && effectiveBudgetCap > 0) ExpenseRed else Color.White
                             )
                         }
                         Column(horizontalAlignment = Alignment.End) {
-                            Text("Budget Cap", style = MaterialTheme.typography.labelSmall, color = Slate400)
+                            Text("Monthly Budget", style = MaterialTheme.typography.labelSmall, color = Slate400)
                             Text(
-                                text = if (totalBudget > 0) formatCurrency(totalBudget) else "Not Set",
+                                text = if (effectiveBudgetCap > 0) formatCurrency(effectiveBudgetCap) else "Tap to Set",
                                 style = MaterialTheme.typography.titleLarge,
                                 fontWeight = FontWeight.SemiBold,
                                 color = EmeraldLight
@@ -153,8 +303,8 @@ fun BudgetScreen(
 
                     Spacer(modifier = Modifier.height(14.dp))
                     SleekProgressBar(
-                        progress = overallProgress,
-                        isOverBudget = totalSpentOnBudgeted > totalBudget && totalBudget > 0
+                        progress = overallProgress.coerceIn(0f, 1f),
+                        isOverBudget = totalSpentMonth > effectiveBudgetCap && effectiveBudgetCap > 0
                     )
 
                     Spacer(modifier = Modifier.height(8.dp))
@@ -162,18 +312,32 @@ fun BudgetScreen(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
-                        val remaining = totalBudget - totalSpentOnBudgeted
-                        Text(
-                            text = if (remaining >= 0) "Remaining: ${formatCurrency(remaining)}" else "Overspent: ${formatCurrency(-remaining)}",
-                            style = MaterialTheme.typography.labelMedium,
-                            fontWeight = FontWeight.SemiBold,
-                            color = if (remaining >= 0) IncomeGreen else ExpenseRed
-                        )
-                        Text(
-                            text = String.format(Locale.getDefault(), "%.1f%% utilized", overallProgress * 100),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = Slate400
-                        )
+                        if (effectiveBudgetCap > 0) {
+                            val remaining = effectiveBudgetCap - totalSpentMonth
+                            Text(
+                                text = if (remaining >= 0) "Remaining: ${formatCurrency(remaining)}" else "Overspent: ${formatCurrency(-remaining)}",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.SemiBold,
+                                color = if (remaining >= 0) IncomeGreen else ExpenseRed
+                            )
+                            Text(
+                                text = String.format(Locale.getDefault(), "%.1f%% utilized", (totalSpentMonth / effectiveBudgetCap) * 100),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = Slate400
+                            )
+                        } else {
+                            Text(
+                                text = "No budget configured yet",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = Slate400
+                            )
+                            Text(
+                                text = "Tap here to configure",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = EmeraldLight,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
                     }
                 }
             }

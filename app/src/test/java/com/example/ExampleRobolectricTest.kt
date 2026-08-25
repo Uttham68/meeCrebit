@@ -122,6 +122,34 @@ class ExampleRobolectricTest {
     }
 
     @Test
+    fun `test sms parser rejects non-transactions and isolates transaction amount from balance`() {
+        // Test OTP rejection
+        val otpSms = "123456 is your secret OTP for transaction of Rs 500 at Swiggy. Do not share."
+        val otpResult = SmsParserEngine.parse(otpSms, "HDFCBK")
+        org.junit.Assert.assertFalse(otpResult.isValidTransaction)
+
+        // Test bill statement reminder rejection
+        val billSms = "Your credit card statement is generated. Total amount due is Rs 40,000.00 by 10-Sep."
+        val billResult = SmsParserEngine.parse(billSms, "KOTAK")
+        org.junit.Assert.assertFalse(billResult.isValidTransaction)
+
+        // Test balance vs transaction amount isolation
+        val upiSms = "Dear UPI user A/C XX1234 debited by 72.00 on 24-08-26 to RAM REDDY CHICKEN DH. Avl Bal: Rs 0.00 - Kotak Bank"
+        val upiResult = SmsParserEngine.parse(upiSms, "KOTAK")
+        assertTrue(upiResult.isValidTransaction)
+        assertEquals(72.0, upiResult.amount, 0.01)
+        assertEquals(TransactionType.DEBIT, upiResult.type)
+        assertEquals(0.0, upiResult.balanceAfter ?: -1.0, 0.01)
+
+        // Test date parsing for August 2026
+        val timestamp = SmsParserEngine.extractTransactionDate(upiSms)
+        val cal = java.util.Calendar.getInstance().apply { timeInMillis = timestamp }
+        assertEquals(2026, cal.get(java.util.Calendar.YEAR))
+        assertEquals(java.util.Calendar.AUGUST, cal.get(java.util.Calendar.MONTH))
+        assertEquals(24, cal.get(java.util.Calendar.DAY_OF_MONTH))
+    }
+
+    @Test
     fun `test biometric auth manager lock state and preferences`() {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val manager = com.example.security.BiometricAuthManager.getInstance(context)

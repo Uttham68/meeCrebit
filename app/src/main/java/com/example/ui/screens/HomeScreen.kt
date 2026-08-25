@@ -16,6 +16,7 @@ import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -35,17 +36,22 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowUpward
+import androidx.compose.material.icons.filled.AutoGraph
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Fingerprint
 import androidx.compose.material.icons.filled.HelpOutline
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Repeat
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Shield
@@ -56,6 +62,8 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.HorizontalDivider
@@ -92,7 +100,9 @@ import com.example.data.model.TransactionEntity
 import com.example.data.model.TransactionType
 import com.example.ui.components.AddEditTransactionDialog
 import com.example.ui.components.CategoryIconBox
+import com.example.ui.components.MeeCrebitBrandHeader
 import com.example.ui.components.MerchantAvatar
+import com.example.ui.components.MonthlySpendingTrendChartCard
 import com.example.ui.components.PrivacyShieldBadge
 import com.example.ui.components.SecuritySettingsDialog
 import com.example.ui.components.SmsPermissionGuideDialog
@@ -111,6 +121,7 @@ import com.example.ui.theme.Slate400
 import com.example.ui.theme.Slate700
 import com.example.ui.theme.Slate800
 import com.example.ui.theme.Slate900
+import com.example.ui.theme.TextMuted
 import com.example.viewmodel.FinanceViewModel
 import java.text.SimpleDateFormat
 import java.util.Calendar
@@ -136,14 +147,20 @@ fun HomeScreen(
     val transactions by viewModel.transactions.collectAsStateWithLifecycle()
     val categoryProgress by viewModel.categoryProgressList.collectAsStateWithLifecycle()
     val selectedMonth by viewModel.selectedMonthYear.collectAsStateWithLifecycle()
+    val userCustomMonthlyBudget by viewModel.userCustomMonthlyBudget.collectAsStateWithLifecycle()
     val isBiometricEnabled by viewModel.isBiometricEnabled.collectAsStateWithLifecycle()
     val isScanningInbox by viewModel.isScanningInbox.collectAsStateWithLifecycle()
+    val analyticsState by viewModel.advancedAnalyticsState.collectAsStateWithLifecycle()
 
     var showAddDialog by remember { mutableStateOf(false) }
     var showSecurityDialog by remember { mutableStateOf(false) }
     var showPermissionGuideDialog by remember { mutableStateOf(false) }
+    var showCategoryBudgetPlannerDialog by remember { mutableStateOf(false) }
     var selectedTransactionForDetail by remember { mutableStateOf<TransactionEntity?>(null) }
     var activeFilter by remember { mutableStateOf(TransactionListFilter.ALL) }
+    var activeMonthFilter by remember(selectedMonth) { mutableStateOf(selectedMonth) }
+    var activeCategoryFilter by remember { mutableStateOf<ExpenseCategory?>(null) }
+    var showMonthPickerMenu by remember { mutableStateOf(false) }
 
     // Check SMS permissions dynamically
     var hasReadSmsPermission by remember {
@@ -165,8 +182,30 @@ fun HomeScreen(
         hasReadSmsPermission = permissions[Manifest.permission.READ_SMS] ?: hasReadSmsPermission
         hasReceiveSmsPermission = permissions[Manifest.permission.RECEIVE_SMS] ?: hasReceiveSmsPermission
         if (hasReadSmsPermission) {
-            // Automatically trigger inbox scan when granted
+            com.example.engine.SmsInboxObserver.startObserving(context)
             viewModel.scanExistingInbox()
+        }
+    }
+
+    val availableMonths = remember(transactions) {
+        val sdf = SimpleDateFormat("yyyy-MM", Locale.getDefault())
+        val months = linkedSetOf<String>()
+        val curMonth = sdf.format(Date())
+        months.add(curMonth)
+        transactions.forEach { tx ->
+            months.add(sdf.format(Date(tx.timestamp)))
+        }
+        months.toList().sortedDescending()
+    }
+
+    val formattedSelectedMonth = remember(selectedMonth) {
+        try {
+            val sdfInput = SimpleDateFormat("yyyy-MM", Locale.getDefault())
+            val sdfOutput = SimpleDateFormat("MMMM yyyy", Locale.getDefault())
+            val parsed = sdfInput.parse(selectedMonth)
+            if (parsed != null) sdfOutput.format(parsed) else selectedMonth
+        } catch (_: Exception) {
+            selectedMonth
         }
     }
 
@@ -179,15 +218,39 @@ fun HomeScreen(
     val dayOfMonth = Calendar.getInstance().get(Calendar.DAY_OF_MONTH).coerceAtLeast(1)
     val dailyAvg = totalExpense / dayOfMonth
 
-    // Budget goal calculation
-    val totalBudgetCap = categoryProgress.mapNotNull { it.limit }.sum().let { if (it > 0) it else 38500.0 }
-    val budgetProgressRatio = (totalExpense / totalBudgetCap).toFloat().coerceIn(0f, 1f)
+    // Budget goal calculation: Total monthly budget is the sum of category budgets
+    val sumCategoryLimits = categoryProgress.mapNotNull { it.limit }.sum()
+    val totalBudgetCap = if (sumCategoryLimits > 0) sumCategoryLimits else null
+    val budgetProgressRatio = if (totalBudgetCap != null && totalBudgetCap > 0) {
+        (totalExpense / totalBudgetCap).toFloat().coerceIn(0f, 1f)
+    } else {
+        0f
+    }
 
-    // Filter transactions for list view
-    val filteredTransactions = when (activeFilter) {
-        TransactionListFilter.ALL -> transactions
-        TransactionListFilter.EXPENSES -> transactions.filter { it.type == TransactionType.DEBIT }
-        TransactionListFilter.INCOME -> transactions.filter { it.type == TransactionType.CREDIT }
+    // Filter transactions for list view by type, month, and category
+    val filteredTransactions = transactions.filter { tx ->
+        val matchesType = when (activeFilter) {
+            TransactionListFilter.ALL -> true
+            TransactionListFilter.EXPENSES -> tx.type == TransactionType.DEBIT
+            TransactionListFilter.INCOME -> tx.type == TransactionType.CREDIT
+        }
+        val matchesMonth = if (activeMonthFilter == "ALL") true else {
+            SimpleDateFormat("yyyy-MM", Locale.getDefault()).format(Date(tx.timestamp)) == activeMonthFilter
+        }
+        val matchesCategory = activeCategoryFilter == null || tx.category == activeCategoryFilter
+        matchesType && matchesMonth && matchesCategory
+    }
+
+    // Chronologically group transactions by Day (yyyy-MM-dd) sorted newest first
+    val groupedTransactions = remember(filteredTransactions) {
+        val sorted = filteredTransactions.sortedByDescending { it.timestamp }
+        val dayFormat = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
+        val map = linkedMapOf<String, MutableList<TransactionEntity>>()
+        for (tx in sorted) {
+            val dateKey = dayFormat.format(Date(tx.timestamp))
+            map.getOrPut(dateKey) { mutableListOf() }.add(tx)
+        }
+        map
     }
 
     // Animated dynamic total expense counter for liveliness
@@ -213,21 +276,10 @@ fun HomeScreen(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = "MEECREBIT VAULT",
-                        style = MaterialTheme.typography.labelSmall,
-                        fontWeight = FontWeight.Bold,
-                        color = EmeraldLight,
-                        letterSpacing = 1.5.sp
-                    )
-                    Text(
-                        text = "Financial Soul",
-                        style = MaterialTheme.typography.headlineMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-                }
+                MeeCrebitBrandHeader(
+                    modifier = Modifier.weight(1f),
+                    tagline = "100% On-Device SMS Ledger"
+                )
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(10.dp)
@@ -475,83 +527,200 @@ fun HomeScreen(
         item {
             Card(
                 colors = CardDefaults.cardColors(containerColor = Slate900),
-                shape = RoundedCornerShape(28.dp),
+                shape = RoundedCornerShape(24.dp),
                 border = BorderStroke(1.dp, Slate800),
                 modifier = Modifier
                     .fillMaxWidth()
                     .testTag("overview_balance_card")
             ) {
-                Box(modifier = Modifier.fillMaxWidth()) {
-                    // Ambient radial glow decorative accent
-                    Box(
-                        modifier = Modifier
-                            .size(160.dp)
-                            .align(Alignment.TopEnd)
-                            .background(
-                                color = EmeraldPrimary.copy(alpha = 0.08f),
-                                shape = CircleShape
-                            )
-                    )
-
-                    Column(modifier = Modifier.padding(22.dp)) {
-                        Text(
-                            text = "Total Spent in Rupees ($selectedMonth)",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = Slate400,
-                            fontWeight = FontWeight.Medium
-                        )
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            text = formatCurrency(animatedTotalExpense.toDouble()),
-                            style = MaterialTheme.typography.headlineLarge,
-                            fontWeight = FontWeight.ExtraBold,
-                            color = Color.White,
-                            letterSpacing = (-0.5).sp
-                        )
-
-                        Spacer(modifier = Modifier.height(20.dp))
-
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
+                Column(modifier = Modifier.padding(20.dp)) {
+                    // Top Row: Category Badge + Month Switcher
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Surface(
+                            color = Color(0xFF062A22),
+                            shape = RoundedCornerShape(20.dp),
+                            border = BorderStroke(1.dp, Color(0xFF047857).copy(alpha = 0.6f))
                         ) {
-                            Column {
-                                Text(
-                                    text = "DAILY AVG SPEND",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    fontWeight = FontWeight.Bold,
-                                    color = Slate400,
-                                    fontSize = 9.sp,
-                                    letterSpacing = 1.sp
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(6.dp)
+                                        .background(EmeraldLight, CircleShape)
                                 )
+                                Spacer(modifier = Modifier.width(6.dp))
                                 Text(
-                                    text = formatCurrency(dailyAvg),
-                                    style = MaterialTheme.typography.titleMedium,
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = Color.White
+                                    text = "Monthly Spends",
+                                    color = EmeraldLight,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold
                                 )
                             }
+                        }
 
-                            Box(
+                        // Month Switcher Controls
+                        Box {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
                                 modifier = Modifier
-                                    .width(1.dp)
-                                    .height(30.dp)
-                                    .background(Slate700)
-                            )
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(Color(0xFF131B26))
+                                    .border(1.dp, Slate700, RoundedCornerShape(12.dp))
+                                    .padding(horizontal = 4.dp, vertical = 2.dp)
+                            ) {
+                                IconButton(
+                                    onClick = { viewModel.goToPreviousMonth() },
+                                    modifier = Modifier
+                                        .size(26.dp)
+                                        .testTag("prev_month_btn")
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                                        contentDescription = "Previous Month",
+                                        tint = Slate400,
+                                        modifier = Modifier.size(14.dp)
+                                    )
+                                }
 
-                            Column(horizontalAlignment = Alignment.End) {
                                 Text(
-                                    text = "THIS MONTH TXNS",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    fontWeight = FontWeight.Bold,
-                                    color = Slate400,
-                                    fontSize = 9.sp,
-                                    letterSpacing = 1.sp
+                                    text = formattedSelectedMonth,
+                                    color = Color.White,
+                                    fontWeight = FontWeight.SemiBold,
+                                    fontSize = 12.sp,
+                                    modifier = Modifier
+                                        .clickable { showMonthPickerMenu = true }
+                                        .padding(horizontal = 6.dp)
+                                        .testTag("selected_month_picker_btn")
                                 )
+
+                                IconButton(
+                                    onClick = { viewModel.goToNextMonth() },
+                                    modifier = Modifier
+                                        .size(26.dp)
+                                        .testTag("next_month_btn")
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+                                        contentDescription = "Next Month",
+                                        tint = Slate400,
+                                        modifier = Modifier.size(14.dp)
+                                    )
+                                }
+                            }
+
+                            DropdownMenu(
+                                expanded = showMonthPickerMenu,
+                                onDismissRequest = { showMonthPickerMenu = false }
+                            ) {
+                                availableMonths.forEach { mKey ->
+                                    val mLabel = try {
+                                        val p = SimpleDateFormat("yyyy-MM", Locale.getDefault()).parse(mKey)
+                                        if (p != null) SimpleDateFormat("MMMM yyyy", Locale.getDefault()).format(p) else mKey
+                                    } catch (_: Exception) {
+                                        mKey
+                                    }
+                                    DropdownMenuItem(
+                                        text = {
+                                            Text(
+                                                text = mLabel,
+                                                fontWeight = if (mKey == selectedMonth) FontWeight.Bold else FontWeight.Normal,
+                                                color = if (mKey == selectedMonth) EmeraldPrimary else MaterialTheme.colorScheme.onSurface
+                                            )
+                                        },
+                                        onClick = {
+                                            viewModel.selectMonthYear(mKey)
+                                            showMonthPickerMenu = false
+                                        }
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(14.dp))
+
+                    Text(
+                        text = formatCurrency(animatedTotalExpense.toDouble()),
+                        style = MaterialTheme.typography.headlineLarge,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = Color.White,
+                        letterSpacing = (-0.5).sp
+                    )
+
+                    if (totalIncome > 0) {
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                text = "+${formatCurrency(totalIncome)} Income received",
+                                color = IncomeGreen,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(16.dp))
+                    HorizontalDivider(
+                        color = Color(0xFF1E2633),
+                        thickness = 1.dp
+                    )
+                    Spacer(modifier = Modifier.height(14.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column {
+                            Text(
+                                text = "DAILY AVG SPEND",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = Slate400,
+                                fontSize = 9.sp,
+                                letterSpacing = 1.sp
+                            )
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                text = formatCurrency(dailyAvg),
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.SemiBold,
+                                color = Color.White
+                            )
+                        }
+
+                        Box(
+                            modifier = Modifier
+                                .width(1.dp)
+                                .height(28.dp)
+                                .background(Slate700)
+                        )
+
+                        Column(horizontalAlignment = Alignment.End) {
+                            Text(
+                                text = "THIS MONTH TXNS",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = Slate400,
+                                fontSize = 9.sp,
+                                letterSpacing = 1.sp
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Surface(
+                                color = Color(0xFF062A22),
+                                shape = RoundedCornerShape(8.dp),
+                                border = BorderStroke(1.dp, Color(0xFF047857).copy(alpha = 0.5f))
+                            ) {
                                 Text(
                                     text = "${currentMonthTxns.size} Records",
-                                    style = MaterialTheme.typography.titleMedium,
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                                    style = MaterialTheme.typography.labelSmall,
                                     fontWeight = FontWeight.Bold,
                                     color = EmeraldLight
                                 )
@@ -568,48 +737,70 @@ fun HomeScreen(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                // Monthly Goal Card
+                // Monthly Goal Card (Clickable to set/edit budget directly)
                 Card(
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                     shape = RoundedCornerShape(20.dp),
                     border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
                     modifier = Modifier
                         .weight(1f)
-                        .clickable { onNavigateToBudgets() }
+                        .clickable { showCategoryBudgetPlannerDialog = true }
                         .testTag("monthly_goal_card")
                 ) {
                     Column(
                         modifier = Modifier
                             .padding(16.dp)
-                            .height(95.dp),
+                            .height(100.dp),
                         verticalArrangement = Arrangement.SpaceBetween
                     ) {
-                        Text(
-                            text = "MONTHLY BUDGET",
-                            style = MaterialTheme.typography.labelSmall,
-                            fontWeight = FontWeight.Bold,
-                            color = Slate400,
-                            fontSize = 10.sp,
-                            letterSpacing = 0.5.sp
-                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "MONTHLY BUDGET",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = Slate400,
+                                fontSize = 10.sp,
+                                letterSpacing = 0.5.sp
+                            )
+                            Icon(
+                                imageVector = Icons.Default.Edit,
+                                contentDescription = "Edit Category Budgets",
+                                tint = EmeraldLight,
+                                modifier = Modifier.size(13.dp)
+                            )
+                        }
+
                         Column {
                             Text(
-                                text = formatCurrency(totalBudgetCap),
+                                text = if (totalBudgetCap != null) formatCurrency(totalBudgetCap) else "Tap to Set",
                                 style = MaterialTheme.typography.titleLarge,
                                 fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.onSurface
+                                color = if (totalBudgetCap != null) MaterialTheme.colorScheme.onSurface else EmeraldLight
                             )
                             Spacer(modifier = Modifier.height(6.dp))
-                            LinearProgressIndicator(
-                                progress = { budgetProgressRatio },
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(5.dp)
-                                    .clip(RoundedCornerShape(3.dp)),
-                                color = EmeraldPrimary,
-                                trackColor = Slate100,
-                                strokeCap = StrokeCap.Round
-                            )
+                            if (totalBudgetCap != null) {
+                                LinearProgressIndicator(
+                                    progress = { budgetProgressRatio },
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(5.dp)
+                                        .clip(RoundedCornerShape(3.dp)),
+                                    color = if (budgetProgressRatio >= 1f) ExpenseRed else EmeraldPrimary,
+                                    trackColor = Slate100,
+                                    strokeCap = StrokeCap.Round
+                                )
+                            } else {
+                                Text(
+                                    text = "Plan category budgets",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = TextMuted,
+                                    fontSize = 10.sp
+                                )
+                            }
                         }
                     }
                 }
@@ -655,6 +846,144 @@ fun HomeScreen(
                     }
                 }
             }
+        }
+
+        // Smart Analytics & Forecast Spotlight Card
+        item {
+            Card(
+                colors = CardDefaults.cardColors(containerColor = Color(0xFF0F172A)),
+                shape = RoundedCornerShape(20.dp),
+                border = BorderStroke(1.dp, Color(0xFF1E293B)),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { onNavigateToReports() }
+                    .testTag("home_analytics_spotlight_card")
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Surface(
+                                shape = CircleShape,
+                                color = Color(0xFF064E3B),
+                                modifier = Modifier.size(30.dp)
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Icon(
+                                        imageVector = Icons.Default.AutoGraph,
+                                        contentDescription = null,
+                                        tint = EmeraldLight,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
+                            }
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Column {
+                                Text(
+                                    text = "Smart Analytics & Forecast",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color.White
+                                )
+                                Text(
+                                    text = "Next-month prediction & subscription audits",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = Slate400,
+                                    fontSize = 11.sp
+                                )
+                            }
+                        }
+
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+                            contentDescription = "Open Analytics",
+                            tint = EmeraldLight,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        // Forecast Pill
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = Color(0xFF1E293B),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Column(modifier = Modifier.padding(10.dp)) {
+                                Text(
+                                    text = "NEXT MONTH",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Slate400,
+                                    fontSize = 9.sp
+                                )
+                                Spacer(modifier = Modifier.height(2.dp))
+                                Text(
+                                    text = formatCurrency(analyticsState.spendingForecast.projectedTotal),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = EmeraldLight
+                                )
+                                val slope = analyticsState.spendingForecast.momTrendSlopePercent
+                                val slopeSign = if (slope > 0) "+" else ""
+                                Text(
+                                    text = "$slopeSign${String.format(Locale.getDefault(), "%.1f", slope)}% pace",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = if (slope > 0) ExpenseRed else IncomeGreen,
+                                    fontSize = 10.sp
+                                )
+                            }
+                        }
+
+                        // Subscriptions Pill
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = Color(0xFF1E293B),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Column(modifier = Modifier.padding(10.dp)) {
+                                Text(
+                                    text = "RECURRING",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Slate400,
+                                    fontSize = 9.sp
+                                )
+                                Spacer(modifier = Modifier.height(2.dp))
+                                Text(
+                                    text = formatCurrency(analyticsState.subscriptionsSummary.totalMonthlyBurden),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color.White
+                                )
+                                Text(
+                                    text = "${analyticsState.subscriptionsSummary.subscriptions.size} recurring items",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = Slate400,
+                                    fontSize = 10.sp
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 6-Month Visual Spending Trend Chart (Recharts-Inspired Outflow Comparison)
+        item {
+            MonthlySpendingTrendChartCard(
+                trendData = analyticsState.sixMonthTrend,
+                onNavigateToAnalytics = onNavigateToReports
+            )
         }
 
         // Quick Actions (SMS Playground & Manual Entry)
@@ -725,10 +1054,10 @@ fun HomeScreen(
             }
         }
 
-        // Filter Chips Row (All, Expenses, Income) matching Screenshot 1 with spring animations
+        // Filter Row 1: Type (All, Expenses, Income)
         item {
             Row(
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
                 modifier = Modifier.fillMaxWidth()
             ) {
                 TransactionListFilter.values().forEach { filter ->
@@ -759,13 +1088,13 @@ fun HomeScreen(
                     ) {
                         Box(
                             contentAlignment = Alignment.Center,
-                            modifier = Modifier.padding(horizontal = 20.dp, vertical = 9.dp)
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
                         ) {
                             Text(
                                 text = filter.label,
                                 color = chipTextColor,
                                 fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                                fontSize = 14.sp
+                                fontSize = 13.sp
                             )
                         }
                     }
@@ -773,22 +1102,161 @@ fun HomeScreen(
             }
         }
 
-        // Section Header: "Recent Transactions" & "View All" matching Screenshot 1
+        // Filter Row 2: Month / Period Selector Chips
+        item {
+            Column(modifier = Modifier.fillMaxWidth()) {
+                Text(
+                    text = "TIME PERIOD",
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color(0xFF6B7280),
+                    letterSpacing = 1.sp,
+                    modifier = Modifier.padding(bottom = 6.dp)
+                )
+                LazyRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    // All Time Option
+                    item {
+                        val isSelected = activeMonthFilter == "ALL"
+                        Surface(
+                            onClick = { activeMonthFilter = "ALL" },
+                            shape = RoundedCornerShape(8.dp),
+                            color = if (isSelected) EmeraldPrimary.copy(alpha = 0.2f) else Color(0xFF161A20),
+                            border = BorderStroke(1.dp, if (isSelected) EmeraldPrimary else Color(0xFF262D37)),
+                            modifier = Modifier.testTag("month_filter_all")
+                        ) {
+                            Text(
+                                text = "All Time",
+                                color = if (isSelected) EmeraldLight else Color(0xFF94A3B8),
+                                fontSize = 12.sp,
+                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                            )
+                        }
+                    }
+
+                    items(availableMonths) { monthKey ->
+                        val isSelected = activeMonthFilter == monthKey
+                        val formattedLabel = try {
+                            val sdf = SimpleDateFormat("yyyy-MM", Locale.getDefault())
+                            val date = sdf.parse(monthKey)
+                            SimpleDateFormat("MMM yyyy", Locale.getDefault()).format(date!!)
+                        } catch (_: Exception) {
+                            monthKey
+                        }
+
+                        Surface(
+                            onClick = {
+                                activeMonthFilter = monthKey
+                                viewModel.selectMonthYear(monthKey)
+                            },
+                            shape = RoundedCornerShape(8.dp),
+                            color = if (isSelected) EmeraldPrimary.copy(alpha = 0.2f) else Color(0xFF161A20),
+                            border = BorderStroke(1.dp, if (isSelected) EmeraldPrimary else Color(0xFF262D37)),
+                            modifier = Modifier.testTag("month_filter_$monthKey")
+                        ) {
+                            Text(
+                                text = formattedLabel,
+                                color = if (isSelected) EmeraldLight else Color(0xFF94A3B8),
+                                fontSize = 12.sp,
+                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        // Filter Row 3: Category Filter Carousel
+        item {
+            Column(modifier = Modifier.fillMaxWidth()) {
+                Text(
+                    text = "CATEGORIES",
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color(0xFF6B7280),
+                    letterSpacing = 1.sp,
+                    modifier = Modifier.padding(bottom = 6.dp)
+                )
+                LazyRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    item {
+                        val isSelected = activeCategoryFilter == null
+                        Surface(
+                            onClick = { activeCategoryFilter = null },
+                            shape = RoundedCornerShape(8.dp),
+                            color = if (isSelected) Color(0xFF334155) else Color(0xFF161A20),
+                            border = BorderStroke(1.dp, if (isSelected) Color(0xFF64748B) else Color(0xFF262D37)),
+                            modifier = Modifier.testTag("category_filter_all")
+                        ) {
+                            Text(
+                                text = "All Categories",
+                                color = if (isSelected) Color.White else Color(0xFF94A3B8),
+                                fontSize = 12.sp,
+                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                            )
+                        }
+                    }
+
+                    items(ExpenseCategory.values()) { cat ->
+                        val isSelected = activeCategoryFilter == cat
+                        Surface(
+                            onClick = { activeCategoryFilter = if (isSelected) null else cat },
+                            shape = RoundedCornerShape(8.dp),
+                            color = if (isSelected) Color(0xFF334155) else Color(0xFF161A20),
+                            border = BorderStroke(1.dp, if (isSelected) Color(0xFF64748B) else Color(0xFF262D37)),
+                            modifier = Modifier.testTag("category_filter_${cat.name.lowercase()}")
+                        ) {
+                            Text(
+                                text = cat.title,
+                                color = if (isSelected) Color.White else Color(0xFF94A3B8),
+                                fontSize = 12.sp,
+                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        // Section Header: "Transactions by Date" & Count
         item {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(top = 4.dp, bottom = 2.dp),
+                    .padding(top = 6.dp, bottom = 2.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(
-                    text = "Recent Transactions",
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.Bold,
-                    color = Color.White,
-                    fontSize = 18.sp
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = "Transactions",
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White,
+                        fontSize = 18.sp
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Surface(
+                        color = Color(0xFF1E2228),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Text(
+                            text = "${filteredTransactions.size} records",
+                            color = Color(0xFF8E9BAE),
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                        )
+                    }
+                }
 
                 Text(
                     text = "View All",
@@ -802,7 +1270,7 @@ fun HomeScreen(
             }
         }
 
-        // Composable List View: Parsed Transactions List or Empty State
+        // Composable List View: Date-Grouped Parsed Transactions List or Empty State
         if (filteredTransactions.isEmpty()) {
             item {
                 Card(
@@ -833,13 +1301,17 @@ fun HomeScreen(
                         }
                         Spacer(modifier = Modifier.height(10.dp))
                         Text(
-                            text = "No Real Transactions Yet",
+                            text = "No Matching Transactions",
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.Bold
                         )
                         Spacer(modifier = Modifier.height(6.dp))
                         Text(
-                            text = "Scan your device SMS inbox to import real bank transactions into Room database, or load realistic Indian demo data.",
+                            text = if (transactions.isEmpty()) {
+                                "Scan your device SMS inbox to import real bank transactions into Room database, or load realistic sample data."
+                            } else {
+                                "No transactions matched the selected date, month, or category filters. Try clearing your filters."
+                            },
                             style = MaterialTheme.typography.bodySmall,
                             color = Slate400,
                             textAlign = androidx.compose.ui.text.style.TextAlign.Center,
@@ -847,66 +1319,139 @@ fun HomeScreen(
                         )
                         Spacer(modifier = Modifier.height(16.dp))
 
-                        Row(
-                            horizontalArrangement = Arrangement.spacedBy(10.dp),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Button(
-                                onClick = {
-                                    if (hasReadSmsPermission) {
-                                        viewModel.scanExistingInbox()
-                                    } else {
-                                        permissionLauncher.launch(
-                                            arrayOf(
-                                                Manifest.permission.READ_SMS,
-                                                Manifest.permission.RECEIVE_SMS
+                        if (transactions.isEmpty()) {
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Button(
+                                    onClick = {
+                                        if (hasReadSmsPermission) {
+                                            viewModel.scanExistingInbox()
+                                        } else {
+                                            permissionLauncher.launch(
+                                                arrayOf(
+                                                    Manifest.permission.READ_SMS,
+                                                    Manifest.permission.RECEIVE_SMS
+                                                )
                                             )
-                                        )
-                                    }
-                                },
-                                colors = ButtonDefaults.buttonColors(containerColor = EmeraldPrimary),
-                                shape = RoundedCornerShape(12.dp),
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .testTag("scan_inbox_empty_state_button")
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Sync,
-                                    contentDescription = null,
-                                    tint = Color(0xFF04201A),
-                                    modifier = Modifier.size(16.dp)
-                                )
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text("Scan SMS Inbox", color = Color(0xFF04201A), fontWeight = FontWeight.Bold, fontSize = 12.sp)
-                            }
+                                        }
+                                    },
+                                    colors = ButtonDefaults.buttonColors(containerColor = EmeraldPrimary),
+                                    shape = RoundedCornerShape(12.dp),
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .testTag("scan_inbox_empty_state_button")
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Sync,
+                                        contentDescription = null,
+                                        tint = Color(0xFF04201A),
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text("Scan SMS Inbox", color = Color(0xFF04201A), fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                                }
 
+                                OutlinedButton(
+                                    onClick = { viewModel.loadRealisticDemoData() },
+                                    shape = RoundedCornerShape(12.dp),
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .testTag("load_demo_data_button")
+                                ) {
+                                    Text("Load Sample Data", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                                }
+                            }
+                        } else {
                             OutlinedButton(
-                                onClick = { viewModel.loadRealisticDemoData() },
-                                shape = RoundedCornerShape(12.dp),
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .testTag("load_demo_data_button")
+                                onClick = {
+                                    activeFilter = TransactionListFilter.ALL
+                                    activeMonthFilter = "ALL"
+                                    activeCategoryFilter = null
+                                },
+                                shape = RoundedCornerShape(12.dp)
                             ) {
-                                Text("Load Sample Data", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                                Text("Reset All Filters", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                             }
                         }
                     }
                 }
             }
         } else {
-            items(
-                items = filteredTransactions,
-                key = { it.id }
-            ) { tx ->
-                ParsedSmsTransactionCard(
-                    transaction = tx,
-                    onClick = { selectedTransactionForDetail = tx }
-                )
+            // Group transactions by date with headers
+            groupedTransactions.forEach { (dateKey, txList) ->
+                item(key = "header_$dateKey") {
+                    val dateHeaderTitle = formatDateHeader(dateKey)
+                    val dayDebits = txList.filter { it.type == TransactionType.DEBIT }.sumOf { it.amount }
+                    val dayCredits = txList.filter { it.type == TransactionType.CREDIT }.sumOf { it.amount }
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 10.dp, bottom = 4.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = dateHeaderTitle,
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFF94A3B8),
+                            fontSize = 13.sp
+                        )
+
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            if (dayDebits > 0) {
+                                Text(
+                                    text = "-${formatCurrency(dayDebits)}",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = Color(0xFFEF4444)
+                                )
+                            }
+                            if (dayCredits > 0) {
+                                Text(
+                                    text = "+${formatCurrency(dayCredits)}",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = EmeraldLight
+                                )
+                            }
+                        }
+                    }
+                }
+
+                items(
+                    items = txList,
+                    key = { it.id }
+                ) { tx ->
+                    ParsedSmsTransactionCard(
+                        transaction = tx,
+                        onClick = { selectedTransactionForDetail = tx }
+                    )
+                }
             }
         }
     }
 
     // Dialogs
+    if (showCategoryBudgetPlannerDialog) {
+        com.example.ui.components.CategoryMonthlyBudgetPlannerDialog(
+            initialCategoryLimits = categoryProgress.filter { it.limit != null }.associate { it.category to it.limit!! },
+            categoryCurrentSpent = categoryProgress.associate { it.category to it.spent },
+            selectedMonthYear = selectedMonth,
+            onDismiss = { showCategoryBudgetPlannerDialog = false },
+            onSaveCategoryBudgets = { newCategoryBudgets ->
+                viewModel.setBatchBudgetLimits(newCategoryBudgets, selectedMonth)
+                showCategoryBudgetPlannerDialog = false
+            },
+            onCopyFromPreviousMonth = {
+                viewModel.copyBudgetsFromPreviousMonth()
+            }
+        )
+    }
+
     if (showAddDialog) {
         AddEditTransactionDialog(
             onDismiss = { showAddDialog = false },
@@ -1039,10 +1584,18 @@ fun ParsedSmsTransactionCard(
                             )
                         }
 
+                        if (transaction.bankName.isNotBlank() && transaction.bankName != "Bank") {
+                            Text(
+                                text = "•  ${transaction.bankName}",
+                                color = Color(0xFF64748B),
+                                fontSize = 11.sp
+                            )
+                        }
+
                         Text(
-                            text = formatRelativeTimestamp(transaction.timestamp),
+                            text = "•  " + SimpleDateFormat("hh:mm a", Locale.getDefault()).format(Date(transaction.timestamp)),
                             color = Color(0xFF717D8D),
-                            fontSize = 12.sp,
+                            fontSize = 11.sp,
                             maxLines = 1
                         )
                     }
@@ -1081,3 +1634,28 @@ fun ParsedSmsTransactionCard(
         )
     }
 }
+
+fun formatDateHeader(dateKey: String): String {
+    return try {
+        val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
+        val date = sdf.parse(dateKey) ?: return dateKey
+        val todayStr = sdf.format(Date())
+        val cal = Calendar.getInstance().apply { add(Calendar.DAY_OF_YEAR, -1) }
+        val yesterdayStr = sdf.format(cal.time)
+
+        val displayFmt = SimpleDateFormat("dd MMM yyyy", Locale.getDefault())
+        val formattedDate = displayFmt.format(date)
+
+        when (dateKey) {
+            todayStr -> "Today • $formattedDate"
+            yesterdayStr -> "Yesterday • $formattedDate"
+            else -> {
+                val dayOfWeekFmt = SimpleDateFormat("EEEE, dd MMM yyyy", Locale.getDefault())
+                dayOfWeekFmt.format(date)
+            }
+        }
+    } catch (_: Exception) {
+        dateKey
+    }
+}
+

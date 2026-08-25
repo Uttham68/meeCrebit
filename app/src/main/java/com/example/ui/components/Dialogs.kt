@@ -65,6 +65,7 @@ import com.example.ui.theme.EmeraldLight
 import com.example.ui.theme.EmeraldPrimary
 import com.example.ui.theme.ExpenseRed
 import com.example.ui.theme.IncomeGreen
+import com.example.ui.theme.Slate400
 import com.example.ui.theme.SlateBorder
 import com.example.ui.theme.SlateSurfaceVariant
 import com.example.ui.theme.TextMuted
@@ -424,6 +425,434 @@ fun TransactionDetailDialog(
             ) {
                 Text("Close", color = Color(0xFF04201A), fontWeight = FontWeight.Bold)
             }
+        }
+    )
+}
+
+@Composable
+fun CategoryMonthlyBudgetPlannerDialog(
+    initialCategoryLimits: Map<ExpenseCategory, Double>,
+    categoryCurrentSpent: Map<ExpenseCategory, Double> = emptyMap(),
+    selectedMonthYear: String,
+    onDismiss: () -> Unit,
+    onSaveCategoryBudgets: (Map<ExpenseCategory, Double>) -> Unit,
+    onCopyFromPreviousMonth: (() -> Unit)? = null
+) {
+    val activeCategories = remember {
+        ExpenseCategory.values().filter { it != ExpenseCategory.SALARY_INCOME }
+    }
+
+    val categoryInputs = remember {
+        androidx.compose.runtime.mutableStateMapOf<ExpenseCategory, String>().apply {
+            activeCategories.forEach { cat ->
+                val current = initialCategoryLimits[cat]
+                put(cat, if (current != null && current > 0) current.toInt().toString() else "")
+            }
+        }
+    }
+
+    val totalSum = categoryInputs.values.sumOf { it.toDoubleOrNull() ?: 0.0 }
+    val activeCount = categoryInputs.values.count { (it.toDoubleOrNull() ?: 0.0) > 0 }
+
+    val formattedMonth = remember(selectedMonthYear) {
+        try {
+            val sdfInput = java.text.SimpleDateFormat("yyyy-MM", java.util.Locale.getDefault())
+            val sdfOutput = java.text.SimpleDateFormat("MMMM yyyy", java.util.Locale.getDefault())
+            val parsed = sdfInput.parse(selectedMonthYear)
+            if (parsed != null) sdfOutput.format(parsed) else selectedMonthYear
+        } catch (_: Exception) {
+            selectedMonthYear
+        }
+    }
+
+    // Helper to apply preset distribution
+    fun applyPreset(presetMap: Map<ExpenseCategory, Double>) {
+        activeCategories.forEach { cat ->
+            val amount = presetMap[cat] ?: 0.0
+            categoryInputs[cat] = if (amount > 0) amount.toInt().toString() else ""
+        }
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Surface(
+                    shape = RoundedCornerShape(10.dp),
+                    color = Color(0xFF047857),
+                    modifier = Modifier.size(36.dp)
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            imageVector = Icons.Default.Shield,
+                            contentDescription = null,
+                            tint = Color.White,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                }
+                Spacer(modifier = Modifier.width(10.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Monthly Budget Planner",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    Text(
+                        text = "Set category limits → Sums to Monthly Budget",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = EmeraldLight,
+                        fontSize = 11.sp
+                    )
+                }
+            }
+        },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(14.dp)
+            ) {
+                // Total Summary Card
+                Surface(
+                    color = com.example.ui.theme.Slate900,
+                    shape = RoundedCornerShape(16.dp),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, com.example.ui.theme.Slate800),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(modifier = Modifier.padding(14.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "TOTAL MONTHLY BUDGET",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = com.example.ui.theme.Slate400,
+                                letterSpacing = 1.2.sp
+                            )
+                            Surface(
+                                shape = RoundedCornerShape(6.dp),
+                                color = EmeraldPrimary.copy(alpha = 0.2f),
+                                border = androidx.compose.foundation.BorderStroke(1.dp, EmeraldLight.copy(alpha = 0.4f))
+                            ) {
+                                Text(
+                                    text = formattedMonth,
+                                    color = EmeraldLight,
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(6.dp))
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.Bottom
+                        ) {
+                            Text(
+                                text = formatCurrency(totalSum),
+                                style = MaterialTheme.typography.headlineSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = if (totalSum > 0) EmeraldLight else com.example.ui.theme.Slate400
+                            )
+                            Text(
+                                text = if (activeCount > 0) "$activeCount categories budgeted" else "Enter category limits below",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = com.example.ui.theme.Slate400
+                            )
+                        }
+                    }
+                }
+
+                // Quick Presets Section
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Quick Presets / Auto-allocate:",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = com.example.ui.theme.Slate400
+                        )
+                        if (onCopyFromPreviousMonth != null) {
+                            Text(
+                                text = "Copy Last Month",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = EmeraldLight,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.clickable {
+                                    onCopyFromPreviousMonth()
+                                    onDismiss()
+                                }
+                            )
+                        }
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        listOf(
+                            Triple("₹25k", "Essential", mapOf(
+                                ExpenseCategory.FOOD_DINING to 6000.0,
+                                ExpenseCategory.GROCERIES to 5000.0,
+                                ExpenseCategory.TRANSPORT to 3000.0,
+                                ExpenseCategory.BILLS_UTILITIES to 4000.0,
+                                ExpenseCategory.SHOPPING to 3000.0,
+                                ExpenseCategory.HEALTH_FITNESS to 2000.0,
+                                ExpenseCategory.OTHERS to 2000.0
+                            )),
+                            Triple("₹50k", "Balanced", mapOf(
+                                ExpenseCategory.FOOD_DINING to 12000.0,
+                                ExpenseCategory.GROCERIES to 9000.0,
+                                ExpenseCategory.TRANSPORT to 5000.0,
+                                ExpenseCategory.BILLS_UTILITIES to 7000.0,
+                                ExpenseCategory.SHOPPING to 6000.0,
+                                ExpenseCategory.ENTERTAINMENT to 4000.0,
+                                ExpenseCategory.HEALTH_FITNESS to 3000.0,
+                                ExpenseCategory.INVESTMENTS to 3000.0,
+                                ExpenseCategory.OTHERS to 1000.0
+                            )),
+                            Triple("₹75k", "Comfort", mapOf(
+                                ExpenseCategory.FOOD_DINING to 18000.0,
+                                ExpenseCategory.GROCERIES to 12000.0,
+                                ExpenseCategory.TRANSPORT to 8000.0,
+                                ExpenseCategory.BILLS_UTILITIES to 10000.0,
+                                ExpenseCategory.SHOPPING to 10000.0,
+                                ExpenseCategory.ENTERTAINMENT to 6000.0,
+                                ExpenseCategory.HEALTH_FITNESS to 5000.0,
+                                ExpenseCategory.INVESTMENTS to 5000.0,
+                                ExpenseCategory.OTHERS to 1000.0
+                            )),
+                            Triple("₹1L", "Premium", mapOf(
+                                ExpenseCategory.FOOD_DINING to 25000.0,
+                                ExpenseCategory.GROCERIES to 16000.0,
+                                ExpenseCategory.TRANSPORT to 12000.0,
+                                ExpenseCategory.BILLS_UTILITIES to 14000.0,
+                                ExpenseCategory.SHOPPING to 12000.0,
+                                ExpenseCategory.ENTERTAINMENT to 8000.0,
+                                ExpenseCategory.HEALTH_FITNESS to 6000.0,
+                                ExpenseCategory.INVESTMENTS to 5000.0,
+                                ExpenseCategory.OTHERS to 2000.0
+                            ))
+                        ).forEach { (label, sub, preset) ->
+                            Surface(
+                                onClick = { applyPreset(preset) },
+                                shape = RoundedCornerShape(10.dp),
+                                color = com.example.ui.theme.SlateSurfaceVariant,
+                                border = androidx.compose.foundation.BorderStroke(1.dp, com.example.ui.theme.SlateBorder),
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Column(
+                                    modifier = Modifier.padding(vertical = 6.dp, horizontal = 2.dp),
+                                    horizontalAlignment = Alignment.CenterHorizontally
+                                ) {
+                                    Text(
+                                        text = label,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        color = EmeraldLight
+                                    )
+                                    Text(
+                                        text = sub,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = com.example.ui.theme.Slate400,
+                                        fontSize = 9.sp
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Category List
+                Text(
+                    text = "Category Limits:",
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = com.example.ui.theme.Slate400,
+                    letterSpacing = 1.sp
+                )
+
+                activeCategories.forEach { category ->
+                    val currentVal = categoryInputs[category] ?: ""
+                    val spentThisMonth = categoryCurrentSpent[category] ?: 0.0
+
+                    Surface(
+                        color = MaterialTheme.colorScheme.surface,
+                        shape = RoundedCornerShape(14.dp),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(modifier = Modifier.padding(12.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    CategoryIconBox(category = category, size = 28)
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text(
+                                        text = category.title,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                }
+
+                                if (spentThisMonth > 0) {
+                                    Text(
+                                        text = "Spent: ${formatCurrency(spentThisMonth)}",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = com.example.ui.theme.Slate400,
+                                        fontSize = 11.sp
+                                    )
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.height(8.dp))
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                OutlinedTextField(
+                                    value = currentVal,
+                                    onValueChange = { input ->
+                                        categoryInputs[category] = input.filter { it.isDigit() }
+                                    },
+                                    placeholder = { Text("0", color = com.example.ui.theme.Slate400) },
+                                    prefix = { Text("₹ ", color = EmeraldLight, fontWeight = FontWeight.Bold) },
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .testTag("budget_input_${category.name}"),
+                                    singleLine = true,
+                                    colors = OutlinedTextFieldDefaults.colors(
+                                        focusedBorderColor = EmeraldLight,
+                                        cursorColor = EmeraldLight
+                                    )
+                                )
+
+                                // Quick increment chips
+                                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    listOf(1000, 5000).forEach { inc ->
+                                        Surface(
+                                            onClick = {
+                                                val existing = categoryInputs[category]?.toDoubleOrNull() ?: 0.0
+                                                categoryInputs[category] = (existing + inc).toInt().toString()
+                                            },
+                                            shape = RoundedCornerShape(8.dp),
+                                            color = com.example.ui.theme.SlateSurfaceVariant,
+                                            border = androidx.compose.foundation.BorderStroke(1.dp, com.example.ui.theme.SlateBorder)
+                                        ) {
+                                            Text(
+                                                text = "+₹${inc / 1000}k",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                fontWeight = FontWeight.SemiBold,
+                                                color = EmeraldLight,
+                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 6.dp),
+                                                fontSize = 10.sp
+                                            )
+                                        }
+                                    }
+                                    if (currentVal.isNotEmpty()) {
+                                        Surface(
+                                            onClick = { categoryInputs[category] = "" },
+                                            shape = RoundedCornerShape(8.dp),
+                                            color = com.example.ui.theme.ExpenseRed.copy(alpha = 0.1f),
+                                            border = androidx.compose.foundation.BorderStroke(1.dp, com.example.ui.theme.ExpenseRed.copy(alpha = 0.3f))
+                                        ) {
+                                            Text(
+                                                text = "✕",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                fontWeight = FontWeight.Bold,
+                                                color = com.example.ui.theme.ExpenseRed,
+                                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+                                                fontSize = 10.sp
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    val resultMap = mutableMapOf<ExpenseCategory, Double>()
+                    activeCategories.forEach { cat ->
+                        val amount = categoryInputs[cat]?.toDoubleOrNull() ?: 0.0
+                        if (amount > 0) {
+                            resultMap[cat] = amount
+                        }
+                    }
+                    onSaveCategoryBudgets(resultMap)
+                    onDismiss()
+                },
+                colors = ButtonDefaults.buttonColors(containerColor = EmeraldPrimary),
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("save_category_budgets_button")
+            ) {
+                Text(
+                    text = "Save Monthly Budget (${formatCurrency(totalSum)})",
+                    color = Color(0xFF04201A),
+                    fontWeight = FontWeight.Bold
+                )
+            }
+        },
+        dismissButton = {
+            TextButton(
+                onClick = onDismiss,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("Cancel", color = com.example.ui.theme.Slate400)
+            }
+        }
+    )
+}
+
+@Composable
+fun SetOverallMonthlyBudgetDialog(
+    currentBudget: Double?,
+    onDismiss: () -> Unit,
+    onSaveBudget: (Double?) -> Unit
+) {
+    // Legacy fallback redirecting to default preset if invoked directly
+    val defaultCategoryMap = mapOf(
+        ExpenseCategory.FOOD_DINING to ((currentBudget ?: 30000.0) * 0.25),
+        ExpenseCategory.GROCERIES to ((currentBudget ?: 30000.0) * 0.20),
+        ExpenseCategory.TRANSPORT to ((currentBudget ?: 30000.0) * 0.15),
+        ExpenseCategory.BILLS_UTILITIES to ((currentBudget ?: 30000.0) * 0.15),
+        ExpenseCategory.SHOPPING to ((currentBudget ?: 30000.0) * 0.15),
+        ExpenseCategory.OTHERS to ((currentBudget ?: 30000.0) * 0.10)
+    )
+    CategoryMonthlyBudgetPlannerDialog(
+        initialCategoryLimits = defaultCategoryMap,
+        selectedMonthYear = java.text.SimpleDateFormat("yyyy-MM", java.util.Locale.getDefault()).format(java.util.Date()),
+        onDismiss = onDismiss,
+        onSaveCategoryBudgets = { map ->
+            onSaveBudget(map.values.sum())
         }
     )
 }

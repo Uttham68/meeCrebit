@@ -9,7 +9,9 @@ import androidx.core.content.FileProvider
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.data.db.MeeCrebitDatabase
+import com.example.data.model.AdvancedAnalyticsState
 import com.example.data.model.BudgetEntity
+import com.example.engine.AdvancedAnalyticsEngine
 import com.example.data.model.CustomReportFilter
 import com.example.data.model.CustomReportInsights
 import com.example.data.model.DateRangePreset
@@ -43,6 +45,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -85,13 +88,22 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
     private val _biometricErrorMessage = MutableStateFlow<String?>(null)
     val biometricErrorMessage: StateFlow<String?> = _biometricErrorMessage.asStateFlow()
 
+    private val _userCustomMonthlyBudget = MutableStateFlow<Double?>(null)
+    val userCustomMonthlyBudget: StateFlow<Double?> = _userCustomMonthlyBudget.asStateFlow()
+
     init {
         val db = MeeCrebitDatabase.getInstance(application)
         repository = FinanceRepository(db)
+        _userCustomMonthlyBudget.value = repository.getUserCustomMonthlyBudget(application)
         viewModelScope.launch {
-            val currentMonth = SimpleDateFormat("yyyy-MM", Locale.getDefault()).format(Date())
-            repository.seedDefaultBudgetsIfEmpty(currentMonth)
             repository.seedDefaultRulesIfEmpty()
+            // Auto repair existing transactions in case dates were previously off
+            try {
+                val repaired = repository.repairExistingTransactionDates(application)
+                if (repaired > 0) {
+                    android.util.Log.d("FinanceViewModel", "Auto-repaired $repaired transaction dates")
+                }
+            } catch (_: Exception) {}
         }
     }
 
@@ -175,6 +187,23 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
         ReportEngine.generateInsights(emptyList(), CustomReportFilter())
     )
 
+    // -------------------------------------------------------------
+    // Advanced On-Device Analytics (Subscriptions, Forecast, MoM)
+    // -------------------------------------------------------------
+    val advancedAnalyticsState: StateFlow<AdvancedAnalyticsState> = combine(
+        transactions,
+        _selectedMonthYear
+    ) { txList, monthYear ->
+        AdvancedAnalyticsEngine.computeFullAnalytics(txList, monthYear)
+    }.stateIn(
+        viewModelScope,
+        SharingStarted.WhileSubscribed(5000),
+        AdvancedAnalyticsEngine.computeFullAnalytics(
+            emptyList(),
+            SimpleDateFormat("yyyy-MM", Locale.getDefault()).format(Date())
+        )
+    )
+
     private val _savedPresets = MutableStateFlow<List<SavedReportPreset>>(
         listOf(
             SavedReportPreset(
@@ -212,6 +241,67 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
         _selectedMonthYear.value = monthYear
     }
 
+    fun goToPreviousMonth() {
+        try {
+            val sdf = SimpleDateFormat("yyyy-MM", Locale.getDefault())
+            val date = sdf.parse(_selectedMonthYear.value) ?: Date()
+            val cal = Calendar.getInstance().apply {
+                time = date
+                add(Calendar.MONTH, -1)
+            }
+            _selectedMonthYear.value = sdf.format(cal.time)
+        } catch (_: Exception) {}
+    }
+
+    fun goToNextMonth() {
+        try {
+            val sdf = SimpleDateFormat("yyyy-MM", Locale.getDefault())
+            val date = sdf.parse(_selectedMonthYear.value) ?: Date()
+            val cal = Calendar.getInstance().apply {
+                time = date
+                add(Calendar.MONTH, 1)
+            }
+            _selectedMonthYear.value = sdf.format(cal.time)
+        } catch (_: Exception) {}
+    }
+
+    fun setUserCustomMonthlyBudget(limit: Double?) {
+        _userCustomMonthlyBudget.value = limit
+        repository.setUserCustomMonthlyBudget(getApplication(), limit)
+        _statusMessage.value = if (limit != null && limit > 0) {
+            "Monthly budget set to ₹${String.format(Locale.getDefault(), "%,.0f", limit)}"
+        } else {
+            "Custom budget cleared."
+        }
+        triggerWidgetUpdate()
+    }
+
+    fun repairAllTransactionDates() {
+        viewModelScope.launch {
+            val count = repository.repairExistingTransactionDates(getApplication())
+            _statusMessage.value = if (count > 0) {
+                "Re-aligned dates for $count transactions based on SMS timestamps!"
+            } else {
+                "All transaction dates are already synchronized."
+            }
+            triggerWidgetUpdate()
+        }
+    }
+
+    fun reparseAllTransactions() {
+        _isScanningInbox.value = true
+        viewModelScope.launch {
+            val count = repository.repairExistingTransactionDates(getApplication())
+            _statusMessage.value = if (count > 0) {
+                "Cleaned & re-parsed $count transactions based on SMS timestamps!"
+            } else {
+                "All transactions are already synchronized."
+            }
+            _isScanningInbox.value = false
+            triggerWidgetUpdate()
+        }
+    }
+
     fun clearStatusMessage() {
         _statusMessage.value = null
     }
@@ -224,6 +314,21 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
         val sdf = SimpleDateFormat("yyyy-MM", Locale.getDefault())
         txList.filter { sdf.format(Date(it.timestamp)) == monthYear }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val currentMonthTotalExpense: StateFlow<Double> = currentMonthTransactions.map { txList ->
+        txList.filter { it.type == TransactionType.DEBIT }.sumOf { it.amount }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0.0)
+
+    val currentMonthTotalIncome: StateFlow<Double> = currentMonthTransactions.map { txList ->
+        txList.filter { it.type == TransactionType.CREDIT }.sumOf { it.amount }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0.0)
+
+    val currentMonthTotalBudget: StateFlow<Double> = combine(
+        budgets,
+        _selectedMonthYear
+    ) { budgetList, monthYear ->
+        budgetList.filter { it.monthYear == monthYear }.sumOf { it.monthlyLimit }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0.0)
 
     val categoryProgressList: StateFlow<List<CategorySpendProgress>> = combine(
         currentMonthTransactions,
@@ -651,6 +756,59 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
                 timestamp = System.currentTimeMillis()
             )
             NotificationHelper.checkAndNotifyBudgetExceeded(context, checkTx, db)
+        }
+    }
+
+    fun setBatchBudgetLimits(
+        categoryLimits: Map<ExpenseCategory, Double>,
+        monthYear: String = _selectedMonthYear.value
+    ) {
+        viewModelScope.launch {
+            val budgetEntities = categoryLimits.map { (cat, limit) ->
+                BudgetEntity(
+                    category = cat,
+                    monthlyLimit = limit,
+                    monthYear = monthYear
+                )
+            }
+            repository.insertOrUpdateBudgets(budgetEntities)
+            val total = categoryLimits.values.sum()
+            _statusMessage.value = "Monthly budget of ₹${String.format(Locale("en", "IN"), "%,.0f", total)} saved across ${categoryLimits.size} categories."
+            triggerWidgetUpdate()
+        }
+    }
+
+    fun copyBudgetsFromPreviousMonth() {
+        viewModelScope.launch {
+            try {
+                val currentMonth = _selectedMonthYear.value
+                val sdf = SimpleDateFormat("yyyy-MM", Locale.getDefault())
+                val parsed = sdf.parse(currentMonth) ?: return@launch
+                val cal = Calendar.getInstance().apply {
+                    time = parsed
+                    add(Calendar.MONTH, -1)
+                }
+                val prevMonth = sdf.format(cal.time)
+                val allBudgets = budgets.value
+                val prevBudgets = allBudgets.filter { it.monthYear == prevMonth }
+                if (prevBudgets.isNotEmpty()) {
+                    val newBudgets = prevBudgets.map {
+                        BudgetEntity(
+                            category = it.category,
+                            monthlyLimit = it.monthlyLimit,
+                            monthYear = currentMonth
+                        )
+                    }
+                    repository.insertOrUpdateBudgets(newBudgets)
+                    val total = newBudgets.sumOf { it.monthlyLimit }
+                    _statusMessage.value = "Copied ${newBudgets.size} category budgets (₹${String.format(Locale("en", "IN"), "%,.0f", total)}) from $prevMonth."
+                    triggerWidgetUpdate()
+                } else {
+                    _statusMessage.value = "No previous month budget found to copy."
+                }
+            } catch (e: Exception) {
+                _statusMessage.value = "Failed to copy previous budget: ${e.message}"
+            }
         }
     }
 

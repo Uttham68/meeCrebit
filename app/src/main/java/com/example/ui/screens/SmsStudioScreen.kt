@@ -371,6 +371,26 @@ fun SmsStudioScreen(
                             Text("Retrain & Reinforce ML Model", color = Color(0xFF04201A), fontWeight = FontWeight.Bold)
                         }
                     }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    OutlinedButton(
+                        onClick = { viewModel.reparseAllTransactions() },
+                        shape = RoundedCornerShape(12.dp),
+                        border = BorderStroke(1.dp, EmeraldLight.copy(alpha = 0.5f)),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("reparse_clean_sms_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Refresh,
+                            contentDescription = "Re-parse SMS",
+                            tint = EmeraldLight,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Re-parse & Clean All Saved SMS Ledger", color = EmeraldLight, fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
+                    }
                 }
             }
         }
