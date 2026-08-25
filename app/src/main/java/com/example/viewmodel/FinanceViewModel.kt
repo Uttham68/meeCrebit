@@ -204,6 +204,76 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
         )
     )
 
+    // -------------------------------------------------------------
+    // Savings Goals & Sinking Funds State
+    // -------------------------------------------------------------
+    val savingsGoals: StateFlow<List<com.example.data.model.SavingsGoalEntity>> = repository.allSavingsGoals
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val totalSavingsAccumulated: StateFlow<Double> = savingsGoals.map { goals ->
+        goals.sumOf { it.currentAmount }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0.0)
+
+    val totalSavingsTarget: StateFlow<Double> = savingsGoals.map { goals ->
+        goals.sumOf { it.targetAmount }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0.0)
+
+    // -------------------------------------------------------------
+    // Split Expenses & IOU Ledger State
+    // -------------------------------------------------------------
+    val splitExpenses: StateFlow<List<com.example.data.model.SplitExpenseEntity>> = repository.allSplitExpenses
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val splitParticipants: StateFlow<List<com.example.data.model.SplitParticipantEntity>> = repository.allSplitParticipants
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val splitExpensesWithParticipants: StateFlow<List<com.example.data.model.SplitExpenseWithParticipants>> = combine(
+        splitExpenses,
+        splitParticipants
+    ) { expenses, participants ->
+        expenses.map { exp ->
+            com.example.data.model.SplitExpenseWithParticipants(
+                expense = exp,
+                participants = participants.filter { it.splitExpenseId == exp.id }
+            )
+        }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val personIouSummaries: StateFlow<List<com.example.data.model.PersonIouSummary>> = splitParticipants.map { participants ->
+        participants.groupBy { it.personName.trim() }
+            .map { (name, personParts) ->
+                val unsettled = personParts.filter { !it.isSettled }
+                val netOwedToMe = unsettled.sumOf { it.remainingToSettle }
+                val latest = personParts.maxOfOrNull { it.settledDate ?: 0L } ?: 0L
+                val contact = personParts.firstOrNull { it.phoneOrUpi.isNotBlank() }?.phoneOrUpi ?: ""
+                com.example.data.model.PersonIouSummary(
+                    personName = name,
+                    netBalance = netOwedToMe,
+                    pendingExpensesCount = unsettled.size,
+                    phoneOrUpi = contact,
+                    latestActivityDate = latest
+                )
+            }.sortedByDescending { it.netBalance }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val totalOwedToMe: StateFlow<Double> = personIouSummaries.map { list ->
+        list.filter { it.netBalance > 0 }.sumOf { it.netBalance }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0.0)
+
+    // -------------------------------------------------------------
+    // Bill Due Date & Subscription Reminders State
+    // -------------------------------------------------------------
+    val billReminders: StateFlow<List<com.example.data.model.BillReminderEntity>> = repository.allBillReminders
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val upcomingBillsCount: StateFlow<Int> = billReminders.map { bills ->
+        bills.count { !it.isPaid && it.status != com.example.data.model.BillStatus.PAID }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
+
+    val totalUpcomingBillsAmount: StateFlow<Double> = billReminders.map { bills ->
+        bills.filter { !it.isPaid }.sumOf { it.amount }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0.0)
+
     private val _savedPresets = MutableStateFlow<List<SavedReportPreset>>(
         listOf(
             SavedReportPreset(
@@ -1067,6 +1137,170 @@ class FinanceViewModel(application: Application) : AndroidViewModel(application)
                 val msg = e.message ?: "Invalid password or corrupted backup file."
                 onError(msg)
             }
+        }
+    }
+
+    // -------------------------------------------------------------
+    // Savings Goals & Sinking Funds Operations
+    // -------------------------------------------------------------
+    fun addOrUpdateSavingsGoal(
+        id: Long = 0,
+        title: String,
+        targetAmount: Double,
+        currentAmount: Double = 0.0,
+        targetDate: Long,
+        category: com.example.data.model.SavingsGoalCategory,
+        notes: String = ""
+    ) {
+        viewModelScope.launch {
+            val goal = com.example.data.model.SavingsGoalEntity(
+                id = id,
+                title = title.trim(),
+                targetAmount = targetAmount,
+                currentAmount = currentAmount,
+                targetDate = targetDate,
+                category = category,
+                colorHex = category.hexColor,
+                notes = notes.trim()
+            )
+            repository.insertOrUpdateSavingsGoal(goal)
+            _statusMessage.value = "Savings Goal '${goal.title}' saved!"
+        }
+    }
+
+    fun deleteSavingsGoal(id: Long) {
+        viewModelScope.launch {
+            repository.deleteSavingsGoal(id)
+            _statusMessage.value = "Savings Goal removed."
+        }
+    }
+
+    fun contributeToSavingsGoal(
+        goalId: Long,
+        amount: Double,
+        note: String = "Deposit to Pot"
+    ) {
+        viewModelScope.launch {
+            repository.addGoalContribution(
+                com.example.data.model.GoalContributionEntity(
+                    goalId = goalId,
+                    amount = amount,
+                    note = note
+                )
+            )
+            _statusMessage.value = "Added ₹$amount to goal fund! 🎯"
+        }
+    }
+
+    fun withdrawFromSavingsGoal(
+        goalId: Long,
+        amount: Double,
+        note: String = "Withdrawal"
+    ) {
+        viewModelScope.launch {
+            repository.withdrawFromGoal(goalId, amount, note)
+            _statusMessage.value = "Withdrawn ₹$amount from goal pot."
+        }
+    }
+
+    // -------------------------------------------------------------
+    // Split Expenses & IOU Operations
+    // -------------------------------------------------------------
+    fun createSplitExpense(
+        title: String,
+        totalAmount: Double,
+        category: ExpenseCategory,
+        participantNames: List<String>,
+        notes: String = ""
+    ) {
+        viewModelScope.launch {
+            val expense = com.example.data.model.SplitExpenseEntity(
+                title = title.trim(),
+                totalAmount = totalAmount,
+                paidByMe = true,
+                category = category,
+                notes = notes.trim()
+            )
+            val totalPeople = participantNames.size + 1 // including me
+            val perPersonShare = totalAmount / totalPeople
+
+            val participants = participantNames.map { name ->
+                com.example.data.model.SplitParticipantEntity(
+                    splitExpenseId = 0,
+                    personName = name.trim(),
+                    amountOwed = perPersonShare,
+                    amountPaid = 0.0,
+                    isSettled = false
+                )
+            }
+            repository.createSplitExpense(expense, participants)
+            _statusMessage.value = "Created split expense: ₹$totalAmount divided among $totalPeople people."
+        }
+    }
+
+    fun deleteSplitExpense(id: Long) {
+        viewModelScope.launch {
+            repository.deleteSplitExpense(id)
+            _statusMessage.value = "Split record deleted."
+        }
+    }
+
+    fun settleIouForParticipant(participantId: Long) {
+        viewModelScope.launch {
+            repository.settleParticipantIou(participantId)
+            _statusMessage.value = "Marked as fully settled! ✅"
+        }
+    }
+
+    fun recordPartialSettlement(participant: com.example.data.model.SplitParticipantEntity, paymentAmount: Double) {
+        viewModelScope.launch {
+            repository.recordPartialSettlement(participant, paymentAmount)
+            _statusMessage.value = "Recorded payment of ₹$paymentAmount."
+        }
+    }
+
+    // -------------------------------------------------------------
+    // Bill Due Date & Subscription Reminders Operations
+    // -------------------------------------------------------------
+    fun addOrUpdateBillReminder(
+        id: Long = 0,
+        title: String,
+        amount: Double,
+        dueDate: Long,
+        frequency: com.example.data.model.BillFrequency,
+        reminderType: com.example.data.model.BillReminderType,
+        billerOrBank: String = "",
+        autoPayEnabled: Boolean = false,
+        notes: String = ""
+    ) {
+        viewModelScope.launch {
+            val reminder = com.example.data.model.BillReminderEntity(
+                id = id,
+                title = title.trim(),
+                amount = amount,
+                dueDate = dueDate,
+                frequency = frequency,
+                reminderType = reminderType,
+                billerOrBank = billerOrBank.trim(),
+                autoPayEnabled = autoPayEnabled,
+                notes = notes.trim()
+            )
+            repository.insertOrUpdateBillReminder(reminder)
+            _statusMessage.value = "Bill reminder '${reminder.title}' scheduled."
+        }
+    }
+
+    fun deleteBillReminder(id: Long) {
+        viewModelScope.launch {
+            repository.deleteBillReminder(id)
+            _statusMessage.value = "Bill reminder removed."
+        }
+    }
+
+    fun markBillAsPaid(reminder: com.example.data.model.BillReminderEntity, logAsTransaction: Boolean = true) {
+        viewModelScope.launch {
+            repository.markBillAsPaid(reminder, logAsTransaction)
+            _statusMessage.value = "Bill '${reminder.title}' marked as paid!"
         }
     }
 }

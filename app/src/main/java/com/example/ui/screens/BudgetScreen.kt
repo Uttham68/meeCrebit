@@ -81,10 +81,16 @@ fun BudgetScreen(
     var currentEditingLimit by remember { mutableStateOf<Double?>(null) }
     var showCategoryBudgetPlannerDialog by remember { mutableStateOf(false) }
 
-    val sumCategoryLimits = categoryProgressList.mapNotNull { it.limit }.sum()
+    val sumCategoryLimits = remember(categoryProgressList) {
+        categoryProgressList.mapNotNull { it.limit }.sum()
+    }
     val effectiveBudgetCap = sumCategoryLimits
-    val totalSpentMonth = categoryProgressList.sumOf { it.spent }
-    val overallProgress = if (effectiveBudgetCap > 0) (totalSpentMonth / effectiveBudgetCap).toFloat() else 0f
+    val totalSpentMonth = remember(categoryProgressList) {
+        categoryProgressList.sumOf { it.spent }
+    }
+    val overallProgress = remember(effectiveBudgetCap, totalSpentMonth) {
+        if (effectiveBudgetCap > 0) (totalSpentMonth / effectiveBudgetCap).toFloat() else 0f
+    }
 
     if (showCategoryBudgetPlannerDialog) {
         com.example.ui.components.CategoryMonthlyBudgetPlannerDialog(
@@ -452,13 +458,17 @@ fun BudgetScreen(
             )
         }
 
-        items(categoryProgressList) { item ->
+        items(
+            items = categoryProgressList,
+            key = { it.category.name }
+        ) { item ->
             SleekBudgetCategoryCard(
                 progressItem = item,
                 onEditClick = {
                     editingCategory = item.category
                     currentEditingLimit = item.limit
-                }
+                },
+                modifier = Modifier.animateItem()
             )
         }
     }

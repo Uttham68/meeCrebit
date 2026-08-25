@@ -52,6 +52,11 @@
                 android:resource="@xml/widget_meecrebit_budget_info" />
         </receiver>
 
+        <!-- Bill Reminders & Subscription Alarm Receiver -->
+        <receiver
+            android:name=".receiver.BillReminderReceiver"
+            android:exported="false" />
+
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"

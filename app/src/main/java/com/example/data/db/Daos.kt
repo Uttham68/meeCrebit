@@ -136,3 +136,115 @@ interface MerchantRuleDao {
     suspend fun deleteAll()
 }
 
+@Dao
+interface SavingsGoalDao {
+    @Query("SELECT * FROM savings_goals ORDER BY isCompleted ASC, targetDate ASC")
+    fun getAllGoals(): Flow<List<com.example.data.model.SavingsGoalEntity>>
+
+    @Query("SELECT * FROM savings_goals WHERE id = :id")
+    suspend fun getGoalById(id: Long): com.example.data.model.SavingsGoalEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertOrUpdateGoal(goal: com.example.data.model.SavingsGoalEntity): Long
+
+    @Delete
+    suspend fun deleteGoal(goal: com.example.data.model.SavingsGoalEntity)
+
+    @Query("DELETE FROM savings_goals WHERE id = :id")
+    suspend fun deleteGoalById(id: Long)
+
+    @Query("UPDATE savings_goals SET currentAmount = currentAmount + :delta WHERE id = :goalId")
+    suspend fun updateGoalAmount(goalId: Long, delta: Double)
+
+    @Query("UPDATE savings_goals SET isCompleted = :isCompleted WHERE id = :goalId")
+    suspend fun setGoalCompleted(goalId: Long, isCompleted: Boolean)
+}
+
+@Dao
+interface GoalContributionDao {
+    @Query("SELECT * FROM goal_contributions WHERE goalId = :goalId ORDER BY date DESC")
+    fun getContributionsForGoal(goalId: Long): Flow<List<com.example.data.model.GoalContributionEntity>>
+
+    @Query("SELECT * FROM goal_contributions ORDER BY date DESC")
+    fun getAllContributions(): Flow<List<com.example.data.model.GoalContributionEntity>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertContribution(contribution: com.example.data.model.GoalContributionEntity): Long
+
+    @Delete
+    suspend fun deleteContribution(contribution: com.example.data.model.GoalContributionEntity)
+}
+
+@Dao
+interface SplitExpenseDao {
+    @Query("SELECT * FROM split_expenses ORDER BY date DESC")
+    fun getAllSplitExpenses(): Flow<List<com.example.data.model.SplitExpenseEntity>>
+
+    @Query("SELECT * FROM split_expenses WHERE id = :id")
+    suspend fun getSplitExpenseById(id: Long): com.example.data.model.SplitExpenseEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertSplitExpense(expense: com.example.data.model.SplitExpenseEntity): Long
+
+    @Update
+    suspend fun updateSplitExpense(expense: com.example.data.model.SplitExpenseEntity)
+
+    @Delete
+    suspend fun deleteSplitExpense(expense: com.example.data.model.SplitExpenseEntity)
+
+    @Query("DELETE FROM split_expenses WHERE id = :id")
+    suspend fun deleteSplitExpenseById(id: Long)
+}
+
+@Dao
+interface SplitParticipantDao {
+    @Query("SELECT * FROM split_participants WHERE splitExpenseId = :splitExpenseId")
+    fun getParticipantsForExpense(splitExpenseId: Long): Flow<List<com.example.data.model.SplitParticipantEntity>>
+
+    @Query("SELECT * FROM split_participants WHERE splitExpenseId = :splitExpenseId")
+    suspend fun getParticipantsForExpenseSync(splitExpenseId: Long): List<com.example.data.model.SplitParticipantEntity>
+
+    @Query("SELECT * FROM split_participants")
+    fun getAllParticipants(): Flow<List<com.example.data.model.SplitParticipantEntity>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertParticipants(participants: List<com.example.data.model.SplitParticipantEntity>)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertParticipant(participant: com.example.data.model.SplitParticipantEntity): Long
+
+    @Update
+    suspend fun updateParticipant(participant: com.example.data.model.SplitParticipantEntity)
+
+    @Query("UPDATE split_participants SET amountPaid = amountOwed, isSettled = 1, settledDate = :settledDate WHERE id = :participantId")
+    suspend fun markParticipantSettled(participantId: Long, settledDate: Long)
+
+    @Delete
+    suspend fun deleteParticipant(participant: com.example.data.model.SplitParticipantEntity)
+}
+
+@Dao
+interface BillReminderDao {
+    @Query("SELECT * FROM bill_reminders ORDER BY isPaid ASC, dueDate ASC")
+    fun getAllReminders(): Flow<List<com.example.data.model.BillReminderEntity>>
+
+    @Query("SELECT * FROM bill_reminders WHERE isPaid = 0 ORDER BY dueDate ASC")
+    fun getActiveReminders(): Flow<List<com.example.data.model.BillReminderEntity>>
+
+    @Query("SELECT * FROM bill_reminders WHERE id = :id")
+    suspend fun getReminderById(id: Long): com.example.data.model.BillReminderEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertOrUpdateReminder(reminder: com.example.data.model.BillReminderEntity): Long
+
+    @Update
+    suspend fun updateReminder(reminder: com.example.data.model.BillReminderEntity)
+
+    @Delete
+    suspend fun deleteReminder(reminder: com.example.data.model.BillReminderEntity)
+
+    @Query("DELETE FROM bill_reminders WHERE id = :id")
+    suspend fun deleteReminderById(id: Long)
+}
+
+

@@ -5,8 +5,13 @@ import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
 import androidx.room.TypeConverters
+import com.example.data.model.BillReminderEntity
 import com.example.data.model.BudgetEntity
+import com.example.data.model.GoalContributionEntity
 import com.example.data.model.MerchantRuleEntity
+import com.example.data.model.SavingsGoalEntity
+import com.example.data.model.SplitExpenseEntity
+import com.example.data.model.SplitParticipantEntity
 import com.example.data.model.TransactionEntity
 import com.example.data.model.ZenProfileEntity
 
@@ -15,9 +20,14 @@ import com.example.data.model.ZenProfileEntity
         TransactionEntity::class,
         BudgetEntity::class,
         ZenProfileEntity::class,
-        MerchantRuleEntity::class
+        MerchantRuleEntity::class,
+        SavingsGoalEntity::class,
+        GoalContributionEntity::class,
+        SplitExpenseEntity::class,
+        SplitParticipantEntity::class,
+        BillReminderEntity::class
     ],
-    version = 2,
+    version = 3,
     exportSchema = false
 )
 @TypeConverters(Converters::class)
@@ -27,6 +37,11 @@ abstract class MeeCrebitDatabase : RoomDatabase() {
     abstract fun budgetDao(): BudgetDao
     abstract fun zenProfileDao(): ZenProfileDao
     abstract fun merchantRuleDao(): MerchantRuleDao
+    abstract fun savingsGoalDao(): SavingsGoalDao
+    abstract fun goalContributionDao(): GoalContributionDao
+    abstract fun splitExpenseDao(): SplitExpenseDao
+    abstract fun splitParticipantDao(): SplitParticipantDao
+    abstract fun billReminderDao(): BillReminderDao
 
     companion object {
         @Volatile

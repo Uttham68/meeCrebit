@@ -1265,13 +1265,17 @@ fun CustomReportsScreen(
                 }
             }
         } else {
-            items(sortedTransactions) { tx ->
+            items(
+                items = sortedTransactions,
+                key = { it.id }
+            ) { tx ->
                 Card(
                     colors = CardDefaults.cardColors(containerColor = DarkSurfaceContainer),
                     shape = RoundedCornerShape(18.dp),
                     border = BorderStroke(1.dp, DarkOutlineVariant),
                     modifier = Modifier
                         .fillMaxWidth()
+                        .animateItem()
                         .clickable { selectedTxForDetails = tx }
                         .testTag("report_tx_item_${tx.id}")
                 ) {

@@ -232,6 +232,46 @@ fun ReportsBoxIcon(
 }
 
 @Composable
+fun SettingsGearIcon(
+    tint: Color,
+    modifier: Modifier = Modifier
+) {
+    Canvas(modifier = modifier) {
+        val w = size.width
+        val h = size.height
+        val cx = w / 2f
+        val cy = h / 2f
+        val stroke = 1.8.dp.toPx()
+        val outerRadius = w * 0.38f
+        val innerRadius = w * 0.16f
+
+        // Draw central ring
+        drawCircle(
+            color = tint,
+            radius = innerRadius,
+            center = Offset(cx, cy),
+            style = Stroke(width = stroke)
+        )
+
+        // Draw 6 gear teeth
+        val teethCount = 6
+        for (i in 0 until teethCount) {
+            val angle = (i * (360.0 / teethCount)) * (Math.PI / 180.0)
+            val cos = Math.cos(angle).toFloat()
+            val sin = Math.sin(angle).toFloat()
+
+            drawLine(
+                color = tint,
+                start = Offset(cx + innerRadius * 1.15f * cos, cy + innerRadius * 1.15f * sin),
+                end = Offset(cx + outerRadius * cos, cy + outerRadius * sin),
+                strokeWidth = stroke * 1.3f,
+                cap = StrokeCap.Round
+            )
+        }
+    }
+}
+
+@Composable
 fun MerchantAvatar(
     merchantName: String,
     category: ExpenseCategory? = null,
@@ -361,7 +401,9 @@ fun CategoryIconBox(
 @Composable
 fun SleekProgressBar(
     progress: Float,
-    isOverBudget: Boolean,
+    isOverBudget: Boolean = false,
+    color: Color? = null,
+    height: androidx.compose.ui.unit.Dp = 6.dp,
     modifier: Modifier = Modifier
 ) {
     val animatedProgress by animateFloatAsState(
@@ -370,7 +412,7 @@ fun SleekProgressBar(
         label = "progress"
     )
 
-    val progressColor = when {
+    val progressColor = color ?: when {
         isOverBudget -> ExpenseRed
         progress >= 0.8f -> AccentGold
         else -> EmeraldPrimary
@@ -380,10 +422,10 @@ fun SleekProgressBar(
         progress = { animatedProgress },
         modifier = modifier
             .fillMaxWidth()
-            .height(6.dp)
-            .clip(RoundedCornerShape(3.dp)),
+            .height(height)
+            .clip(RoundedCornerShape(height / 2)),
         color = progressColor,
-        trackColor = Slate100,
+        trackColor = Color(0xFF1E293B),
         strokeCap = StrokeCap.Round
     )
 }

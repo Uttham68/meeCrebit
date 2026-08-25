@@ -70,7 +70,6 @@ fun LockScreenOverlay(
     isLocked: Boolean,
     onTriggerUnlock: () -> Unit,
     errorMessage: String? = null,
-    onBypassUnlock: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     AnimatedVisibility(
@@ -264,21 +263,6 @@ fun LockScreenOverlay(
                                 style = MaterialTheme.typography.titleMedium,
                                 fontWeight = FontWeight.SemiBold,
                                 color = Color(0xFF002113)
-                            )
-                        }
-                    }
-
-                    if (errorMessage != null && onBypassUnlock != null) {
-                        Spacer(modifier = Modifier.height(10.dp))
-                        TextButton(
-                            onClick = onBypassUnlock,
-                            modifier = Modifier.testTag("emergency_unlock_button")
-                        ) {
-                            Text(
-                                text = "Bypass to Ledger (Sensor Fallback)",
-                                color = EmeraldLight,
-                                style = MaterialTheme.typography.labelMedium,
-                                fontWeight = FontWeight.Bold
                             )
                         }
                     }

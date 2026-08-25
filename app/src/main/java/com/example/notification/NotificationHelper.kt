@@ -25,8 +25,10 @@ object NotificationHelper {
 
     const val CHANNEL_TXNS = "meecrebit_txns"
     const val CHANNEL_BUDGET_ALERTS = "meecrebit_budget_alerts"
+    const val CHANNEL_BILLS = "meecrebit_bill_reminders"
 
     private const val NOTIFICATION_ID_BUDGET_BASE = 9000
+    private const val NOTIFICATION_ID_BILLS_BASE = 12000
 
     fun createNotificationChannels(context: Context) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -54,8 +56,20 @@ object NotificationHelper {
                 enableLights(true)
             }
 
+            // Channel 3: Bill Due Date & Subscription Reminders
+            val billChannel = NotificationChannel(
+                CHANNEL_BILLS,
+                "Bill & Subscription Reminders",
+                NotificationManager.IMPORTANCE_HIGH
+            ).apply {
+                description = "Alerts for upcoming utility bills, credit card dues, and recurring subscriptions"
+                enableVibration(true)
+                enableLights(true)
+            }
+
             notificationManager.createNotificationChannel(txnChannel)
             notificationManager.createNotificationChannel(budgetChannel)
+            notificationManager.createNotificationChannel(billChannel)
         }
     }
 
@@ -230,5 +244,46 @@ object NotificationHelper {
         } catch (e: Exception) {
             Log.e("NotificationHelper", "Failed to check budget threshold: ${e.message}")
         }
+    }
+
+    fun notifyBillDue(
+        context: Context,
+        reminder: com.example.data.model.BillReminderEntity
+    ) {
+        if (!hasNotificationPermission(context)) {
+            Log.w("NotificationHelper", "POST_NOTIFICATIONS permission not granted for bill reminder.")
+            return
+        }
+
+        createNotificationChannels(context)
+        val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
+            ?: return
+
+        val appIntent = Intent(context, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+        }
+        val pendingIntent = PendingIntent.getActivity(
+            context,
+            reminder.id.toInt(),
+            appIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val formattedAmt = String.format(Locale("en", "IN"), "₹%,.2f", reminder.amount)
+        val dueDateFormat = SimpleDateFormat("dd MMM", Locale.getDefault()).format(Date(reminder.dueDate))
+        val title = "⏰ Bill Due Soon: ${reminder.title}"
+        val content = "${reminder.title} of $formattedAmt is due on $dueDateFormat (${reminder.billerOrBank.ifBlank { reminder.reminderType.title }})."
+
+        val notification = NotificationCompat.Builder(context, CHANNEL_BILLS)
+            .setSmallIcon(R.mipmap.ic_launcher)
+            .setContentTitle(title)
+            .setContentText(content)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(content))
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setContentIntent(pendingIntent)
+            .setAutoCancel(true)
+            .build()
+
+        notificationManager.notify((NOTIFICATION_ID_BILLS_BASE + reminder.id).toInt(), notification)
     }
 }

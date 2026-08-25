@@ -52,6 +52,9 @@ import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Repeat
+import androidx.compose.material.icons.filled.Group
+import androidx.compose.material.icons.filled.NotificationsActive
+import androidx.compose.material.icons.filled.Savings
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Shield
@@ -64,6 +67,7 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.HorizontalDivider
@@ -75,6 +79,9 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.material3.pulltorefresh.PullToRefreshDefaults
+import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -134,6 +141,7 @@ enum class TransactionListFilter(val label: String) {
     INCOME("Income")
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HomeScreen(
     viewModel: FinanceViewModel,
@@ -141,6 +149,9 @@ fun HomeScreen(
     onNavigateToBudgets: () -> Unit,
     onNavigateToReports: () -> Unit = {},
     onNavigateToSettings: () -> Unit = {},
+    onNavigateToSavings: () -> Unit = {},
+    onNavigateToSplits: () -> Unit = {},
+    onNavigateToBills: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -151,6 +162,11 @@ fun HomeScreen(
     val isBiometricEnabled by viewModel.isBiometricEnabled.collectAsStateWithLifecycle()
     val isScanningInbox by viewModel.isScanningInbox.collectAsStateWithLifecycle()
     val analyticsState by viewModel.advancedAnalyticsState.collectAsStateWithLifecycle()
+    val savingsGoals by viewModel.savingsGoals.collectAsStateWithLifecycle()
+    val totalSaved by viewModel.totalSavingsAccumulated.collectAsStateWithLifecycle()
+    val totalOwedToMe by viewModel.totalOwedToMe.collectAsStateWithLifecycle()
+    val upcomingBillsCount by viewModel.upcomingBillsCount.collectAsStateWithLifecycle()
+    val upcomingBillsAmount by viewModel.totalUpcomingBillsAmount.collectAsStateWithLifecycle()
 
     var showAddDialog by remember { mutableStateOf(false) }
     var showSecurityDialog by remember { mutableStateOf(false) }
@@ -209,64 +225,115 @@ fun HomeScreen(
         }
     }
 
-    val currentMonthTxns = transactions.filter {
-        SimpleDateFormat("yyyy-MM", Locale.getDefault()).format(Date(it.timestamp)) == selectedMonth
+    val currentMonthTxns = remember(transactions, selectedMonth) {
+        val sdf = SimpleDateFormat("yyyy-MM", Locale.getDefault())
+        transactions.filter {
+            sdf.format(Date(it.timestamp)) == selectedMonth
+        }
     }
 
-    val totalExpense = currentMonthTxns.filter { it.type == TransactionType.DEBIT }.sumOf { it.amount }
-    val totalIncome = currentMonthTxns.filter { it.type == TransactionType.CREDIT }.sumOf { it.amount }
-    val dayOfMonth = Calendar.getInstance().get(Calendar.DAY_OF_MONTH).coerceAtLeast(1)
-    val dailyAvg = totalExpense / dayOfMonth
+    val totalExpense = remember(currentMonthTxns) {
+        currentMonthTxns.filter { it.type == TransactionType.DEBIT }.sumOf { it.amount }
+    }
+    val totalIncome = remember(currentMonthTxns) {
+        currentMonthTxns.filter { it.type == TransactionType.CREDIT }.sumOf { it.amount }
+    }
+    val dayOfMonth = remember {
+        Calendar.getInstance().get(Calendar.DAY_OF_MONTH).coerceAtLeast(1)
+    }
+    val dailyAvg = remember(totalExpense, dayOfMonth) {
+        totalExpense / dayOfMonth
+    }
 
     // Budget goal calculation: Total monthly budget is the sum of category budgets
-    val sumCategoryLimits = categoryProgress.mapNotNull { it.limit }.sum()
-    val totalBudgetCap = if (sumCategoryLimits > 0) sumCategoryLimits else null
-    val budgetProgressRatio = if (totalBudgetCap != null && totalBudgetCap > 0) {
-        (totalExpense / totalBudgetCap).toFloat().coerceIn(0f, 1f)
-    } else {
-        0f
+    val sumCategoryLimits = remember(categoryProgress) {
+        categoryProgress.mapNotNull { it.limit }.sum()
+    }
+    val totalBudgetCap = remember(sumCategoryLimits) {
+        if (sumCategoryLimits > 0) sumCategoryLimits else null
+    }
+    val budgetProgressRatio = remember(totalExpense, totalBudgetCap) {
+        if (totalBudgetCap != null && totalBudgetCap > 0) {
+            (totalExpense / totalBudgetCap).toFloat().coerceIn(0f, 1f)
+        } else {
+            0f
+        }
     }
 
     // Filter transactions for list view by type, month, and category
-    val filteredTransactions = transactions.filter { tx ->
-        val matchesType = when (activeFilter) {
-            TransactionListFilter.ALL -> true
-            TransactionListFilter.EXPENSES -> tx.type == TransactionType.DEBIT
-            TransactionListFilter.INCOME -> tx.type == TransactionType.CREDIT
+    val filteredTransactions = remember(transactions, activeFilter, activeMonthFilter, activeCategoryFilter) {
+        val sdf = SimpleDateFormat("yyyy-MM", Locale.getDefault())
+        transactions.filter { tx ->
+            val matchesType = when (activeFilter) {
+                TransactionListFilter.ALL -> true
+                TransactionListFilter.EXPENSES -> tx.type == TransactionType.DEBIT
+                TransactionListFilter.INCOME -> tx.type == TransactionType.CREDIT
+            }
+            val matchesMonth = if (activeMonthFilter == "ALL") true else {
+                sdf.format(Date(tx.timestamp)) == activeMonthFilter
+            }
+            val matchesCategory = activeCategoryFilter == null || tx.category == activeCategoryFilter
+            matchesType && matchesMonth && matchesCategory
         }
-        val matchesMonth = if (activeMonthFilter == "ALL") true else {
-            SimpleDateFormat("yyyy-MM", Locale.getDefault()).format(Date(tx.timestamp)) == activeMonthFilter
-        }
-        val matchesCategory = activeCategoryFilter == null || tx.category == activeCategoryFilter
-        matchesType && matchesMonth && matchesCategory
     }
 
-    // Chronologically group transactions by Day (yyyy-MM-dd) sorted newest first
-    val groupedTransactions = remember(filteredTransactions) {
+    // Chronologically group transactions by Day (yyyy-MM-dd) precomputing summaries and time strings
+    val groupedDayItems = remember(filteredTransactions) {
         val sorted = filteredTransactions.sortedByDescending { it.timestamp }
         val dayFormat = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
-        val map = linkedMapOf<String, MutableList<TransactionEntity>>()
+        val timeFormat = SimpleDateFormat("hh:mm a", Locale.getDefault())
+        val map = linkedMapOf<String, MutableList<TxDisplayItem>>()
         for (tx in sorted) {
             val dateKey = dayFormat.format(Date(tx.timestamp))
-            map.getOrPut(dateKey) { mutableListOf() }.add(tx)
+            val timeStr = timeFormat.format(Date(tx.timestamp))
+            map.getOrPut(dateKey) { mutableListOf() }.add(TxDisplayItem(tx, timeStr))
         }
-        map
+        map.map { (dateKey, items) ->
+            val dayDebits = items.filter { it.transaction.type == TransactionType.DEBIT }.sumOf { it.transaction.amount }
+            val dayCredits = items.filter { it.transaction.type == TransactionType.CREDIT }.sumOf { it.transaction.amount }
+            DayGroupItem(
+                dateKey = dateKey,
+                dateHeaderTitle = formatDateHeader(dateKey),
+                dayDebits = dayDebits,
+                dayCredits = dayCredits,
+                items = items
+            )
+        }
     }
 
     // Animated dynamic total expense counter for liveliness
     val animatedTotalExpense by animateFloatAsState(
         targetValue = totalExpense.toFloat(),
-        animationSpec = tween(durationMillis = 650, easing = FastOutSlowInEasing),
+        animationSpec = tween(durationMillis = 450, easing = FastOutSlowInEasing),
         label = "animated_total_expense"
     )
 
-    LazyColumn(
+    val pullToRefreshState = rememberPullToRefreshState()
+
+    PullToRefreshBox(
+        isRefreshing = isScanningInbox,
+        onRefresh = { viewModel.scanExistingInbox() },
+        state = pullToRefreshState,
+        indicator = {
+            PullToRefreshDefaults.Indicator(
+                state = pullToRefreshState,
+                isRefreshing = isScanningInbox,
+                modifier = Modifier.align(Alignment.TopCenter),
+                containerColor = Slate900,
+                color = EmeraldLight
+            )
+        },
         modifier = modifier
             .fillMaxSize()
-            .padding(horizontal = 16.dp),
-        contentPadding = PaddingValues(top = 16.dp, bottom = 90.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
+            .testTag("home_pull_to_refresh")
     ) {
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 16.dp),
+            contentPadding = PaddingValues(top = 16.dp, bottom = 90.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
         // Top Bar: Brand Subtitle + Title + Biometric Vault Button & Settings Icon
         item {
             Row(
@@ -309,25 +376,6 @@ fun HomeScreen(
                                 fontWeight = FontWeight.Bold,
                                 color = if (isBiometricEnabled) Color.White else Slate400,
                                 fontSize = 10.sp
-                            )
-                        }
-                    }
-
-                    Surface(
-                        onClick = onNavigateToSettings,
-                        shape = CircleShape,
-                        color = Slate800,
-                        border = BorderStroke(1.dp, Slate700),
-                        modifier = Modifier
-                            .size(38.dp)
-                            .testTag("home_settings_btn")
-                    ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Icon(
-                                imageVector = Icons.Default.Settings,
-                                contentDescription = "Settings",
-                                tint = Slate200,
-                                modifier = Modifier.size(18.dp)
                             )
                         }
                     }
@@ -447,7 +495,7 @@ fun HomeScreen(
                     }
                 }
             } else {
-                // Active SMS Interceptor Status Card with 1-tap Inbox Sync
+                // Active SMS Interceptor Status Card (Pull-to-Refresh Enabled)
                 Surface(
                     color = Color(0xFF062018),
                     shape = RoundedCornerShape(16.dp),
@@ -480,7 +528,7 @@ fun HomeScreen(
                                     color = EmeraldLight
                                 )
                                 Text(
-                                    text = "Real bank SMS auto-saved to local Room DB",
+                                    text = if (isScanningInbox) "Scanning SMS inbox..." else "Pull down to scan new SMS messages",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = Slate400,
                                     fontSize = 10.sp
@@ -488,34 +536,36 @@ fun HomeScreen(
                             }
                         }
 
-                        Button(
-                            onClick = { viewModel.scanExistingInbox() },
-                            enabled = !isScanningInbox,
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = Color(0xFF047857),
-                                disabledContainerColor = Slate800
-                            ),
-                            shape = RoundedCornerShape(8.dp),
-                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
-                            modifier = Modifier.testTag("scan_device_inbox_button")
-                        ) {
-                            if (isScanningInbox) {
-                                CircularProgressIndicator(
-                                    color = Color.White,
-                                    modifier = Modifier.size(14.dp),
-                                    strokeWidth = 2.dp
-                                )
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text("Scanning...", fontSize = 11.sp)
-                            } else {
-                                Icon(
-                                    imageVector = Icons.Default.Sync,
-                                    contentDescription = "Scan SMS Inbox",
-                                    tint = Color.White,
-                                    modifier = Modifier.size(14.dp)
-                                )
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text("Scan Inbox", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        if (isScanningInbox) {
+                            CircularProgressIndicator(
+                                color = EmeraldLight,
+                                modifier = Modifier.size(16.dp),
+                                strokeWidth = 2.dp
+                            )
+                        } else {
+                            Surface(
+                                color = Color(0xFF064E3B).copy(alpha = 0.6f),
+                                shape = RoundedCornerShape(8.dp),
+                                border = BorderStroke(1.dp, Color(0xFF059669).copy(alpha = 0.4f))
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Refresh,
+                                        contentDescription = "Pull to Refresh",
+                                        tint = EmeraldLight,
+                                        modifier = Modifier.size(12.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text(
+                                        text = "Pull to Scan",
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = EmeraldLight
+                                    )
+                                }
                             }
                         }
                     }
@@ -986,6 +1036,128 @@ fun HomeScreen(
             )
         }
 
+        // Financial Hub Cards: Savings Pots, Split Bills & Bill Reminders
+        item {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(
+                    text = "Financial Tools & Modules",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = Color.White
+                )
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    // Savings Goals Pot Card
+                    Surface(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clickable { onNavigateToSavings() }
+                            .testTag("hub_card_savings"),
+                        shape = RoundedCornerShape(16.dp),
+                        color = Color(0xFF0F172A),
+                        border = BorderStroke(1.dp, Color(0xFF1E293B))
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Surface(
+                                    shape = CircleShape,
+                                    color = EmeraldPrimary.copy(alpha = 0.2f),
+                                    modifier = Modifier.size(28.dp)
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Icon(Icons.Default.Savings, contentDescription = null, tint = EmeraldLight, modifier = Modifier.size(16.dp))
+                                    }
+                                }
+                                Text("${savingsGoals.size} Pots", fontSize = 10.sp, color = EmeraldLight, fontWeight = FontWeight.Bold)
+                            }
+                            Text("Savings Goals", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold, color = Color.White)
+                            Text(formatCurrency(totalSaved), fontSize = 13.sp, fontWeight = FontWeight.ExtraBold, color = EmeraldLight)
+                        }
+                    }
+
+                    // Split & IOU Ledger Card
+                    Surface(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clickable { onNavigateToSplits() }
+                            .testTag("hub_card_splits"),
+                        shape = RoundedCornerShape(16.dp),
+                        color = Color(0xFF0F172A),
+                        border = BorderStroke(1.dp, Color(0xFF1E293B))
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Surface(
+                                    shape = CircleShape,
+                                    color = Color(0xFF38BDF8).copy(alpha = 0.2f),
+                                    modifier = Modifier.size(28.dp)
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Icon(Icons.Default.Group, contentDescription = null, tint = Color(0xFF38BDF8), modifier = Modifier.size(16.dp))
+                                    }
+                                }
+                                Text("IOU", fontSize = 10.sp, color = Color(0xFF38BDF8), fontWeight = FontWeight.Bold)
+                            }
+                            Text("Split Bills", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold, color = Color.White)
+                            Text(if (totalOwedToMe > 0) "+${formatCurrency(totalOwedToMe)}" else "Settled", fontSize = 13.sp, fontWeight = FontWeight.ExtraBold, color = if (totalOwedToMe > 0) IncomeGreen else Slate400)
+                        }
+                    }
+
+                    // Bill Reminders Card
+                    Surface(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clickable { onNavigateToBills() }
+                            .testTag("hub_card_bills"),
+                        shape = RoundedCornerShape(16.dp),
+                        color = Color(0xFF0F172A),
+                        border = BorderStroke(1.dp, Color(0xFF1E293B))
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Surface(
+                                    shape = CircleShape,
+                                    color = Color(0xFFF59E0B).copy(alpha = 0.2f),
+                                    modifier = Modifier.size(28.dp)
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Icon(Icons.Default.NotificationsActive, contentDescription = null, tint = Color(0xFFF59E0B), modifier = Modifier.size(16.dp))
+                                    }
+                                }
+                                Text("$upcomingBillsCount Due", fontSize = 10.sp, color = Color(0xFFF59E0B), fontWeight = FontWeight.Bold)
+                            }
+                            Text("Bill Alarms", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold, color = Color.White)
+                            Text(formatCurrency(upcomingBillsAmount), fontSize = 13.sp, fontWeight = FontWeight.ExtraBold, color = Color(0xFFF59E0B))
+                        }
+                    }
+                }
+            }
+        }
+
         // Quick Actions (SMS Playground & Manual Entry)
         item {
             Row(
@@ -1380,12 +1552,8 @@ fun HomeScreen(
             }
         } else {
             // Group transactions by date with headers
-            groupedTransactions.forEach { (dateKey, txList) ->
-                item(key = "header_$dateKey") {
-                    val dateHeaderTitle = formatDateHeader(dateKey)
-                    val dayDebits = txList.filter { it.type == TransactionType.DEBIT }.sumOf { it.amount }
-                    val dayCredits = txList.filter { it.type == TransactionType.CREDIT }.sumOf { it.amount }
-
+            groupedDayItems.forEach { dayGroup ->
+                item(key = "header_${dayGroup.dateKey}") {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -1394,7 +1562,7 @@ fun HomeScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = dateHeaderTitle,
+                            text = dayGroup.dateHeaderTitle,
                             style = MaterialTheme.typography.labelLarge,
                             fontWeight = FontWeight.Bold,
                             color = Color(0xFF94A3B8),
@@ -1402,17 +1570,17 @@ fun HomeScreen(
                         )
 
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            if (dayDebits > 0) {
+                            if (dayGroup.dayDebits > 0) {
                                 Text(
-                                    text = "-${formatCurrency(dayDebits)}",
+                                    text = "-${formatCurrency(dayGroup.dayDebits)}",
                                     fontSize = 11.sp,
                                     fontWeight = FontWeight.SemiBold,
                                     color = Color(0xFFEF4444)
                                 )
                             }
-                            if (dayCredits > 0) {
+                            if (dayGroup.dayCredits > 0) {
                                 Text(
-                                    text = "+${formatCurrency(dayCredits)}",
+                                    text = "+${formatCurrency(dayGroup.dayCredits)}",
                                     fontSize = 11.sp,
                                     fontWeight = FontWeight.SemiBold,
                                     color = EmeraldLight
@@ -1423,17 +1591,19 @@ fun HomeScreen(
                 }
 
                 items(
-                    items = txList,
-                    key = { it.id }
-                ) { tx ->
+                    items = dayGroup.items,
+                    key = { it.transaction.id }
+                ) { displayItem ->
                     ParsedSmsTransactionCard(
-                        transaction = tx,
-                        onClick = { selectedTransactionForDetail = tx }
+                        transaction = displayItem.transaction,
+                        formattedTime = displayItem.formattedTime,
+                        onClick = { selectedTransactionForDetail = displayItem.transaction }
                     )
                 }
             }
         }
     }
+}
 
     // Dialogs
     if (showCategoryBudgetPlannerDialog) {
@@ -1503,6 +1673,19 @@ fun HomeScreen(
     }
 }
 
+data class DayGroupItem(
+    val dateKey: String,
+    val dateHeaderTitle: String,
+    val dayDebits: Double,
+    val dayCredits: Double,
+    val items: List<TxDisplayItem>
+)
+
+data class TxDisplayItem(
+    val transaction: TransactionEntity,
+    val formattedTime: String
+)
+
 /**
  * Composable List View Item for Transactions matching Screenshot 1 exactly
  * Displays Avatar with First Letter, Merchant Name, Category Pill, Relative Time,
@@ -1511,11 +1694,15 @@ fun HomeScreen(
 @Composable
 fun ParsedSmsTransactionCard(
     transaction: TransactionEntity,
+    formattedTime: String = "",
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val isDebit = transaction.type == TransactionType.DEBIT
     val initial = transaction.merchant.trim().firstOrNull()?.uppercaseChar() ?: 'M'
+    val displayTime = if (formattedTime.isNotBlank()) formattedTime else {
+        SimpleDateFormat("hh:mm a", Locale.getDefault()).format(Date(transaction.timestamp))
+    }
 
     Column(
         modifier = modifier
@@ -1593,7 +1780,7 @@ fun ParsedSmsTransactionCard(
                         }
 
                         Text(
-                            text = "•  " + SimpleDateFormat("hh:mm a", Locale.getDefault()).format(Date(transaction.timestamp)),
+                            text = "•  $displayTime",
                             color = Color(0xFF717D8D),
                             fontSize = 11.sp,
                             maxLines = 1

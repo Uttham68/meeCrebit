@@ -22,6 +22,156 @@ class FinanceRepository(private val db: MeeCrebitDatabase) {
     val allRules: Flow<List<MerchantRuleEntity>> = db.merchantRuleDao().getAllRules()
     val zenProfile: Flow<ZenProfileEntity?> = db.zenProfileDao().getProfile()
 
+    val allSavingsGoals: Flow<List<com.example.data.model.SavingsGoalEntity>> = db.savingsGoalDao().getAllGoals()
+    val allGoalContributions: Flow<List<com.example.data.model.GoalContributionEntity>> = db.goalContributionDao().getAllContributions()
+    val allSplitExpenses: Flow<List<com.example.data.model.SplitExpenseEntity>> = db.splitExpenseDao().getAllSplitExpenses()
+    val allSplitParticipants: Flow<List<com.example.data.model.SplitParticipantEntity>> = db.splitParticipantDao().getAllParticipants()
+    val allBillReminders: Flow<List<com.example.data.model.BillReminderEntity>> = db.billReminderDao().getAllReminders()
+
+    // -------------------------------------------------------------
+    // Savings Goals & Contributions
+    // -------------------------------------------------------------
+    suspend fun insertOrUpdateSavingsGoal(goal: com.example.data.model.SavingsGoalEntity): Long {
+        return db.savingsGoalDao().insertOrUpdateGoal(goal)
+    }
+
+    suspend fun deleteSavingsGoal(id: Long) {
+        db.savingsGoalDao().deleteGoalById(id)
+    }
+
+    suspend fun addGoalContribution(contribution: com.example.data.model.GoalContributionEntity) {
+        db.goalContributionDao().insertContribution(contribution)
+        db.savingsGoalDao().updateGoalAmount(contribution.goalId, contribution.amount)
+        val goal = db.savingsGoalDao().getGoalById(contribution.goalId)
+        if (goal != null && goal.currentAmount >= goal.targetAmount) {
+            db.savingsGoalDao().setGoalCompleted(goal.id, true)
+        }
+    }
+
+    suspend fun withdrawFromGoal(goalId: Long, amount: Double, note: String = "Withdrawal") {
+        db.goalContributionDao().insertContribution(
+            com.example.data.model.GoalContributionEntity(
+                goalId = goalId,
+                amount = -amount,
+                note = note
+            )
+        )
+        db.savingsGoalDao().updateGoalAmount(goalId, -amount)
+        val goal = db.savingsGoalDao().getGoalById(goalId)
+        if (goal != null && goal.currentAmount < goal.targetAmount) {
+            db.savingsGoalDao().setGoalCompleted(goal.id, false)
+        }
+    }
+
+    fun getContributionsForGoal(goalId: Long): Flow<List<com.example.data.model.GoalContributionEntity>> {
+        return db.goalContributionDao().getContributionsForGoal(goalId)
+    }
+
+    // -------------------------------------------------------------
+    // Split Expenses & IOU Participants
+    // -------------------------------------------------------------
+    suspend fun createSplitExpense(
+        expense: com.example.data.model.SplitExpenseEntity,
+        participants: List<com.example.data.model.SplitParticipantEntity>
+    ): Long {
+        val expenseId = db.splitExpenseDao().insertSplitExpense(expense)
+        val updatedParticipants = participants.map { it.copy(splitExpenseId = expenseId) }
+        db.splitParticipantDao().insertParticipants(updatedParticipants)
+        return expenseId
+    }
+
+    suspend fun deleteSplitExpense(id: Long) {
+        db.splitExpenseDao().deleteSplitExpenseById(id)
+    }
+
+    suspend fun settleParticipantIou(participantId: Long) {
+        db.splitParticipantDao().markParticipantSettled(participantId, System.currentTimeMillis())
+    }
+
+    suspend fun recordPartialSettlement(participant: com.example.data.model.SplitParticipantEntity, paymentAmount: Double) {
+        val newPaid = participant.amountPaid + paymentAmount
+        val isSettled = newPaid >= participant.amountOwed
+        db.splitParticipantDao().updateParticipant(
+            participant.copy(
+                amountPaid = newPaid,
+                isSettled = isSettled,
+                settledDate = if (isSettled) System.currentTimeMillis() else participant.settledDate
+            )
+        )
+    }
+
+    // -------------------------------------------------------------
+    // Bill Reminders
+    // -------------------------------------------------------------
+    suspend fun insertOrUpdateBillReminder(reminder: com.example.data.model.BillReminderEntity): Long {
+        return db.billReminderDao().insertOrUpdateReminder(reminder)
+    }
+
+    suspend fun deleteBillReminder(id: Long) {
+        db.billReminderDao().deleteReminderById(id)
+    }
+
+    suspend fun markBillAsPaid(reminder: com.example.data.model.BillReminderEntity, logAsTransaction: Boolean = true) {
+        val now = System.currentTimeMillis()
+        // If recurring, advance the next due date based on frequency
+        val nextDueDate = when (reminder.frequency) {
+            com.example.data.model.BillFrequency.ONE_TIME -> reminder.dueDate
+            com.example.data.model.BillFrequency.MONTHLY -> {
+                val cal = Calendar.getInstance().apply { timeInMillis = reminder.dueDate }
+                cal.add(Calendar.MONTH, 1)
+                cal.timeInMillis
+            }
+            com.example.data.model.BillFrequency.QUARTERLY -> {
+                val cal = Calendar.getInstance().apply { timeInMillis = reminder.dueDate }
+                cal.add(Calendar.MONTH, 3)
+                cal.timeInMillis
+            }
+            com.example.data.model.BillFrequency.HALF_YEARLY -> {
+                val cal = Calendar.getInstance().apply { timeInMillis = reminder.dueDate }
+                cal.add(Calendar.MONTH, 6)
+                cal.timeInMillis
+            }
+            com.example.data.model.BillFrequency.YEARLY -> {
+                val cal = Calendar.getInstance().apply { timeInMillis = reminder.dueDate }
+                cal.add(Calendar.YEAR, 1)
+                cal.timeInMillis
+            }
+        }
+
+        val updated = reminder.copy(
+            isPaid = if (reminder.frequency == com.example.data.model.BillFrequency.ONE_TIME) true else false,
+            dueDate = if (reminder.frequency == com.example.data.model.BillFrequency.ONE_TIME) reminder.dueDate else nextDueDate,
+            lastPaidDate = now
+        )
+        db.billReminderDao().updateReminder(updated)
+
+        if (logAsTransaction) {
+            val category = when (reminder.reminderType) {
+                com.example.data.model.BillReminderType.CREDIT_CARD,
+                com.example.data.model.BillReminderType.ELECTRICITY,
+                com.example.data.model.BillReminderType.RENT,
+                com.example.data.model.BillReminderType.INTERNET,
+                com.example.data.model.BillReminderType.OTHER -> ExpenseCategory.BILLS_UTILITIES
+                com.example.data.model.BillReminderType.SUBSCRIPTION -> ExpenseCategory.ENTERTAINMENT
+                com.example.data.model.BillReminderType.INSURANCE -> ExpenseCategory.INVESTMENTS
+                com.example.data.model.BillReminderType.LOAN_EMI -> ExpenseCategory.BILLS_UTILITIES
+            }
+
+            db.transactionDao().insertTransaction(
+                TransactionEntity(
+                    amount = reminder.amount,
+                    type = TransactionType.DEBIT,
+                    merchant = reminder.title,
+                    category = category,
+                    accountNumber = "XX9123",
+                    bankName = reminder.billerOrBank.ifBlank { "Auto Bill Pay" },
+                    timestamp = now,
+                    isManual = true
+                )
+            )
+        }
+    }
+
     fun getBudgetsForMonth(monthYear: String): Flow<List<BudgetEntity>> {
         return db.budgetDao().getBudgetsForMonth(monthYear)
     }
@@ -414,6 +564,137 @@ class FinanceRepository(private val db: MeeCrebitDatabase) {
                 streakDays = 5,
                 lastActiveDate = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date()),
                 monthlySavingsGoal = 25000.0
+            )
+        )
+
+        // Seed initial demo Savings Goals
+        val calGoal1 = Calendar.getInstance().apply { add(Calendar.MONTH, 6) }
+        val calGoal2 = Calendar.getInstance().apply { add(Calendar.MONTH, 3) }
+        val calGoal3 = Calendar.getInstance().apply { add(Calendar.MONTH, 10) }
+        val goal1Id = db.savingsGoalDao().insertOrUpdateGoal(
+            com.example.data.model.SavingsGoalEntity(
+                title = "Emergency Fund (6 Months)",
+                targetAmount = 150000.0,
+                currentAmount = 85000.0,
+                targetDate = calGoal1.timeInMillis,
+                category = com.example.data.model.SavingsGoalCategory.EMERGENCY_FUND,
+                notes = "High-interest savings deposit buffer"
+            )
+        )
+        val goal2Id = db.savingsGoalDao().insertOrUpdateGoal(
+            com.example.data.model.SavingsGoalEntity(
+                title = "Japan Autumn Vacation",
+                targetAmount = 120000.0,
+                currentAmount = 45000.0,
+                targetDate = calGoal2.timeInMillis,
+                category = com.example.data.model.SavingsGoalCategory.VACATION,
+                notes = "Flights & hotel reservations"
+            )
+        )
+        val goal3Id = db.savingsGoalDao().insertOrUpdateGoal(
+            com.example.data.model.SavingsGoalEntity(
+                title = "MacBook Pro M3 Max",
+                targetAmount = 180000.0,
+                currentAmount = 135000.0,
+                targetDate = calGoal3.timeInMillis,
+                category = com.example.data.model.SavingsGoalCategory.GADGETS,
+                notes = "Workstation upgrade fund"
+            )
+        )
+        db.goalContributionDao().insertContribution(
+            com.example.data.model.GoalContributionEntity(
+                goalId = goal1Id,
+                amount = 25000.0,
+                date = now - (15 * dayMs),
+                note = "Monthly salary transfer"
+            )
+        )
+        db.goalContributionDao().insertContribution(
+            com.example.data.model.GoalContributionEntity(
+                goalId = goal2Id,
+                amount = 15000.0,
+                date = now - (7 * dayMs),
+                note = "Bonus deposit"
+            )
+        )
+
+        // Seed initial demo Bill Reminders
+        val calDue1 = Calendar.getInstance().apply { add(Calendar.DAY_OF_MONTH, 2) }
+        val calDue2 = Calendar.getInstance().apply { add(Calendar.DAY_OF_MONTH, 7) }
+        val calDue3 = Calendar.getInstance().apply { add(Calendar.DAY_OF_MONTH, 14) }
+        db.billReminderDao().insertOrUpdateReminder(
+            com.example.data.model.BillReminderEntity(
+                title = "HDFC Regalia Credit Card",
+                amount = 14850.0,
+                dueDate = calDue1.timeInMillis,
+                frequency = com.example.data.model.BillFrequency.MONTHLY,
+                reminderType = com.example.data.model.BillReminderType.CREDIT_CARD,
+                billerOrBank = "HDFC Bank",
+                autoPayEnabled = false,
+                notes = "Pay total amount due to avoid APR interest"
+            )
+        )
+        db.billReminderDao().insertOrUpdateReminder(
+            com.example.data.model.BillReminderEntity(
+                title = "Airtel Xstream Fiber Wi-Fi",
+                amount = 1179.0,
+                dueDate = calDue2.timeInMillis,
+                frequency = com.example.data.model.BillFrequency.MONTHLY,
+                reminderType = com.example.data.model.BillReminderType.INTERNET,
+                billerOrBank = "Airtel Broadband",
+                autoPayEnabled = true
+            )
+        )
+        db.billReminderDao().insertOrUpdateReminder(
+            com.example.data.model.BillReminderEntity(
+                title = "Bescom Electricity Bill",
+                amount = 2450.0,
+                dueDate = calDue3.timeInMillis,
+                frequency = com.example.data.model.BillFrequency.MONTHLY,
+                reminderType = com.example.data.model.BillReminderType.ELECTRICITY,
+                billerOrBank = "Bescom",
+                autoPayEnabled = false
+            )
+        )
+
+        // Seed initial demo Split Expenses & IOU
+        val split1Id = db.splitExpenseDao().insertSplitExpense(
+            com.example.data.model.SplitExpenseEntity(
+                title = "Team Weekend Dinner & Drinks",
+                totalAmount = 4800.0,
+                paidByMe = true,
+                date = now - (2 * dayMs),
+                category = ExpenseCategory.FOOD_DINING,
+                notes = "Split 4 ways among friends"
+            )
+        )
+        db.splitParticipantDao().insertParticipants(
+            listOf(
+                com.example.data.model.SplitParticipantEntity(
+                    splitExpenseId = split1Id,
+                    personName = "Rahul S.",
+                    amountOwed = 1200.0,
+                    amountPaid = 0.0,
+                    isSettled = false,
+                    phoneOrUpi = "rahul@okaxis"
+                ),
+                com.example.data.model.SplitParticipantEntity(
+                    splitExpenseId = split1Id,
+                    personName = "Priya M.",
+                    amountOwed = 1200.0,
+                    amountPaid = 1200.0,
+                    isSettled = true,
+                    settledDate = now - (1 * dayMs),
+                    phoneOrUpi = "priya@upi"
+                ),
+                com.example.data.model.SplitParticipantEntity(
+                    splitExpenseId = split1Id,
+                    personName = "Arjun K.",
+                    amountOwed = 1200.0,
+                    amountPaid = 0.0,
+                    isSettled = false,
+                    phoneOrUpi = "arjun@okhdfcbank"
+                )
             )
         )
     }
